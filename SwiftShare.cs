@@ -125,6 +125,7 @@ namespace FileTransferApp
             SetupTrayIcon();
             
             this.Load += (s, e) => {
+                SetDarkTitleBar();
                 StartTcpServer();
                 StartUdpListener();
                 BroadcastPresence();
