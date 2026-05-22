@@ -208,7 +208,9 @@ namespace FileTransferApp
                 using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\SwiftShare\PeerNames", false)) {
                     if (key != null) {
                         foreach (string valName in key.GetValueNames()) {
-                            peerNames[valName] = key.GetValue(valName).ToString();
+                            string val = key.GetValue(valName).ToString();
+                            if (!val.Contains("|")) val += "|0";
+                            peerNames[valName] = val;
                         }
                     }
                 }
@@ -356,16 +358,18 @@ namespace FileTransferApp
             renameItem.Click += (s, e) => {
                 if (peerList.SelectedItem == null) return;
                 string ep = peerList.SelectedItem.ToString().Split(' ')[0]; string ip = ep.Split(':')[0];
-                string curName = peerNames.ContainsKey(ip) ? peerNames[ip] : "";
+                string curName = peerNames.ContainsKey(ip) ? peerNames[ip].Split('|')[0] : "";
                 Form pForm = new Form() { Width = 300, Height = 130, FormBorderStyle = FormBorderStyle.FixedDialog, Text = "Set Peer Name", StartPosition = FormStartPosition.CenterParent, MaximizeBox = false, MinimizeBox = false };
                 TextBox tb = new TextBox() { Left = 20, Top = 20, Width = 240, Text = curName };
                 Button okBtn = new Button() { Text = "OK", Left = 160, Top = 50, Width = 100, DialogResult = DialogResult.OK };
                 pForm.Controls.Add(tb); pForm.Controls.Add(okBtn); pForm.AcceptButton = okBtn;
                 if (pForm.ShowDialog() == DialogResult.OK) {
                     string newName = tb.Text.Trim();
+                    long ts = DateTime.UtcNow.Ticks;
                     if (string.IsNullOrEmpty(newName)) { peerNames.Remove(ip); try { using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\SwiftShare\PeerNames")) { key.DeleteValue(ip, false); } } catch {} }
-                    else { peerNames[ip] = newName; try { using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\SwiftShare\PeerNames")) { key.SetValue(ip, newName); } } catch {} }
+                    else { peerNames[ip] = newName + "|" + ts; try { using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\SwiftShare\PeerNames")) { key.SetValue(ip, peerNames[ip]); } } catch {} }
                     peerList.Invalidate();
+                    BroadcastAliasUpdate(ip, newName, ts);
                 }
             };
             peerMenu.Items.Add(renameItem);
@@ -781,7 +785,7 @@ namespace FileTransferApp
             using (SolidBrush brush = new SolidBrush(isSelected ? primaryColor : sidebarColor)) e.Graphics.FillRectangle(brush, e.Bounds);
             string fullText = peerList.Items[e.Index].ToString(); string[] parts = fullText.Split(new string[] { " (" }, StringSplitOptions.None);
             string ip = parts[0].Split(':')[0];
-            string displayName = peerNames.ContainsKey(ip) ? peerNames[ip] : parts[0];
+            string displayName = peerNames.ContainsKey(ip) ? peerNames[ip].Split('|')[0] : parts[0];
             e.Graphics.DrawString(displayName, new Font("Segoe UI Semibold", 10), Brushes.White, e.Bounds.X + 20, e.Bounds.Y + 8);
             
             string subText = (peerNames.ContainsKey(ip) ? parts[0] + " - " : "") + (parts.Length > 1 ? parts[1].Replace(")", "") : "");
@@ -1063,6 +1067,19 @@ namespace FileTransferApp
 
         private async void BroadcastPresence() { while (true) { try { using (UdpClient udp = new UdpClient()) { udp.EnableBroadcast = true; udp.MulticastLoopback = true; udp.JoinMulticastGroup(IPAddress.Parse(MulticastIp)); byte[] data = Encoding.UTF8.GetBytes("SWIFTSHARE_V1|" + linkSpeed + "|" + actualTcpPort + "|" + instanceId); udp.Send(data, data.Length, new IPEndPoint(IPAddress.Parse(MulticastIp), UdpPort)); udp.Send(data, data.Length, new IPEndPoint(IPAddress.Broadcast, UdpPort)); } } catch { } await Task.Delay(3000); } }
 
+        private void BroadcastAliasUpdate(string targetIp, string name, long ts)
+        {
+            try {
+                using (UdpClient udp = new UdpClient()) {
+                    udp.EnableBroadcast = true;
+                    byte[] data = Encoding.UTF8.GetBytes("SYNC_ALIAS|" + targetIp + "|" + name + "|" + ts);
+                    udp.Send(data, data.Length, new IPEndPoint(IPAddress.Parse(MulticastIp), UdpPort));
+                    udp.Send(data, data.Length, new IPEndPoint(IPAddress.Broadcast, UdpPort));
+                }
+            } catch { }
+        }
+
+
         private async void StartUdpListener() {
             try {
                 UdpClient udp = new UdpClient(); udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true); udp.Client.ExclusiveAddressUse = false; udp.Client.Bind(new IPEndPoint(IPAddress.Any, UdpPort)); udp.JoinMulticastGroup(IPAddress.Parse(MulticastIp));
@@ -1075,9 +1092,34 @@ namespace FileTransferApp
                         string remoteEndPoint = ip + ":" + remotePort; peerLastSeen[remoteEndPoint] = DateTime.Now; string displayText = remoteEndPoint + " (" + remoteSpeed + ")";
                         SafeInvoke(() => { int existingIndex = -1; for(int i=0; i<peerList.Items.Count; i++) { if (peerList.Items[i].ToString().StartsWith(remoteEndPoint)) { existingIndex = i; break; } } if (existingIndex >= 0) peerList.Items[existingIndex] = displayText; else peerList.Items.Add(displayText); });
                     }
+                    else if (msg.StartsWith("SYNC_ALIAS")) {
+                        string[] parts = msg.Split('|');
+                        if (parts.Length >= 4) {
+                            string targetIp = parts[1]; string newName = parts[2]; long ts = long.Parse(parts[3]);
+                            bool shouldUpdate = true;
+                            if (peerNames.ContainsKey(targetIp)) {
+                                string[] curParts = peerNames[targetIp].Split('|');
+                                long curTs = curParts.Length > 1 ? long.Parse(curParts[1]) : 0;
+                                if (ts <= curTs) shouldUpdate = false;
+                            }
+                            if (shouldUpdate) {
+                                SafeInvoke(() => {
+                                    if (string.IsNullOrEmpty(newName)) {
+                                        peerNames.Remove(targetIp);
+                                        try { using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\SwiftShare\PeerNames")) { key.DeleteValue(targetIp, false); } } catch {}
+                                    } else {
+                                        peerNames[targetIp] = newName + "|" + ts;
+                                        try { using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\SwiftShare\PeerNames")) { key.SetValue(targetIp, peerNames[targetIp]); } } catch {}
+                                    }
+                                    peerList.Invalidate();
+                                });
+                            }
+                        }
+                    }
                 }
             } catch { }
         }
+
 
         private async void PeerCleanupLoop() { while (true) { await Task.Delay(3000); SafeInvoke(() => { List<string> toRemove = new List<string>(); foreach (var kvp in peerLastSeen) { if ((DateTime.Now - kvp.Value).TotalSeconds > 10) toRemove.Add(kvp.Key); } foreach (string key in toRemove) { peerLastSeen.Remove(key); for (int i = peerList.Items.Count - 1; i >= 0; i--) { if (peerList.Items[i].ToString().StartsWith(key)) peerList.Items.RemoveAt(i); } if (currentRemotePeer == key) { currentRemotePeer = ""; lvRemote.Items.Clear(); txtRemote.Text = "Peer Disconnected"; } } }); } }
 
