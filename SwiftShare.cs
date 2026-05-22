@@ -883,7 +883,26 @@ namespace FileTransferApp
                 Direction = "OUT", RemoteIP = ip, RemotePort = port 
             };
             task.LocalBaseDir = baseDir; 
-            SafeInvoke(() => { CreateTaskCard(task); task.StatusLbl.Text = "Status: Initializing Dynamic Stream..."; });
+            SafeInvoke(() => { CreateTaskCard(task); task.StatusLbl.Text = "Status: Scanning files..."; });
+
+            Stopwatch scanSw = new Stopwatch(); scanSw.Start();
+            long totalItems = 0;
+            long totalBytes = 0;
+
+            // Phase 1: High-Speed Pre-Scan
+            foreach (string path in paths) {
+                if (task.IsCancelled) break;
+                if (File.Exists(path)) { totalItems++; totalBytes += new FileInfo(path).Length; }
+                else if (Directory.Exists(path)) {
+                    var result = await Task.Run(() => ScanDirectoryFast(path));
+                    totalItems += result.Item1;
+                    totalBytes += result.Item2;
+                }
+            }
+            task.TotalItems = totalItems;
+            task.TotalBytes = totalBytes;
+
+            if (task.IsCancelled) { task.CompleteTask("Cancelled"); return; }
 
             try { 
                 using (TcpClient client = new TcpClient()) {
@@ -891,7 +910,7 @@ namespace FileTransferApp
                     client.SendBufferSize = 33554432;
                     await client.ConnectAsync(ip, port);
                     using (NetworkStream ns = client.GetStream()) {
-                        await SendCommandAsync(ns, "TASK_START|" + task.TaskName + "|0|0|" + task.TaskId + "|" + actualTcpPort); 
+                        await SendCommandAsync(ns, "TASK_START|" + task.TaskName + "|" + task.TotalBytes + "|" + task.TotalItems + "|" + task.TaskId + "|" + actualTcpPort); 
 
                         Stopwatch sw = new Stopwatch(); sw.Start();
                         long processedItems = 0;
@@ -901,10 +920,12 @@ namespace FileTransferApp
                             if (File.Exists(path)) {
                                 await StreamSingleFilePersistent(ns, path, Path.Combine(remoteDestDir, Path.GetFileName(path)), task, sw);
                                 processedItems++;
+                                task.ProcessedItems = processedItems;
+                                task.UpdateProgress(task.TransferredBytes, (task.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001));
                             } else if (Directory.Exists(path)) {
                                 string rootDir = Path.GetDirectoryName(path);
                                 if (!rootDir.EndsWith(Path.DirectorySeparatorChar.ToString())) rootDir += Path.DirectorySeparatorChar;
-                                processedItems += await SendFolderRecursive(ns, path, rootDir, remoteDestDir, task, sw);
+                                processedItems = await SendFolderRecursive(ns, path, rootDir, remoteDestDir, task, sw, processedItems);
                             }
                         }
 
@@ -920,38 +941,53 @@ namespace FileTransferApp
             SafeInvoke(() => { RefreshRemoteList(); });
         }
 
-        private async Task<long> SendFolderRecursive(NetworkStream ns, string currentDir, string rootDir, string remoteDestDir, TransferTask task, Stopwatch sw)
+        private Tuple<long, long> ScanDirectoryFast(string dir)
         {
-            long count = 0;
-            if (task.IsCancelled) return 0;
+            long count = 1; // Count the folder itself
+            long size = 0;
+            try {
+                foreach (string f in Directory.GetFiles(dir)) {
+                    try { size += new FileInfo(f).Length; count++; } catch {}
+                }
+                foreach (string d in Directory.GetDirectories(dir)) {
+                    var sub = ScanDirectoryFast(d);
+                    count += sub.Item1;
+                    size += sub.Item2;
+                }
+            } catch {}
+            return new Tuple<long, long>(count, size);
+        }
+
+        private async Task<long> SendFolderRecursive(NetworkStream ns, string currentDir, string rootDir, string remoteDestDir, TransferTask task, Stopwatch sw, long currentProcessed)
+        {
+            if (task.IsCancelled) return currentProcessed;
 
             try {
-                // Ensure directory exists on remote side
                 string relDir = currentDir.Substring(rootDir.Length).Replace("\\", "/");
                 string remoteDir = Path.Combine(remoteDestDir, relDir).Replace("\\", "/");
                 await SendCommandAsync(ns, "MKDIR|" + remoteDir + "|" + task.TaskId);
-                count++; // Count the folder itself to match "Properties" behavior if desired, but usually people compare file counts. 
-                         // Here we count every processed item (file/folder).
+                currentProcessed++;
+                task.ProcessedItems = currentProcessed;
+                task.UpdateProgress(task.TransferredBytes, (task.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001));
 
-                // Send files in this directory
                 foreach (string file in Directory.GetFiles(currentDir)) {
                     if (task.IsCancelled) break;
                     string relPath = file.Substring(rootDir.Length).Replace("\\", "/");
                     await StreamSingleFilePersistent(ns, file, Path.Combine(remoteDestDir, relPath), task, sw);
-                    count++;
-                    if (count % 500 == 0) SafeInvoke(() => { task.StatusLbl.Text = "Status: Sending " + count + " items..."; });
+                    currentProcessed++;
+                    task.ProcessedItems = currentProcessed;
+                    task.UpdateProgress(task.TransferredBytes, (task.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001));
                 }
 
-                // Recurse into subdirectories
                 foreach (string dir in Directory.GetDirectories(currentDir)) {
                     if (task.IsCancelled) break;
-                    count += await SendFolderRecursive(ns, dir, rootDir, remoteDestDir, task, sw);
+                    currentProcessed = await SendFolderRecursive(ns, dir, rootDir, remoteDestDir, task, sw, currentProcessed);
                 }
-            } catch (UnauthorizedAccessException) { /* Skip inaccessible folders */ }
-              catch (Exception) { /* Skip other errors like path too long */ }
+            } catch {}
 
-            return count;
+            return currentProcessed;
         }
+
         private async Task StreamSingleFilePersistent(NetworkStream ns, string localPath, string remotePath, TransferTask task, Stopwatch sw)
         {
             try {
