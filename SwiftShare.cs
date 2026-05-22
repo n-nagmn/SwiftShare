@@ -1149,12 +1149,12 @@ namespace FileTransferApp
                                             r = await ns.ReadAsync(rB, 0, (int)Math.Min((long)rB.Length, fs - total));
                                         } 
                                         await wT;
-                                    }
-                                }
-                            } catch { if (taskContext != null) taskContext.CompleteTask("Write Error"); }
-                            SafeInvoke(() => { RefreshLocalList(txtLocal.Text); });
-                        }
-                        else if (cmd == "EXCHANGE_ALIASES") {
+                                        }
+                                        }
+                                        } catch { if (taskContext != null) taskContext.CompleteTask("Write Error"); }
+                                        }
+                                        else if (cmd == "EXCHANGE_ALIASES") {
+
                             string peerData = parts.Length > 1 ? parts[1] : "";
                             MergeAliasSyncString(peerData);
                             string myData = GetAliasSyncString();
