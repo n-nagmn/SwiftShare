@@ -316,7 +316,7 @@ namespace FileTransferApp
             lvLocal = new ListView() { Location = new Point(5, 35), Size = new Size(splitExplorer.Panel1.Width - 10, splitExplorer.Panel1.Height - 80), View = View.Details, FullRowSelect = true, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right, Font = new Font("Segoe UI", 9.5f) };
             lvLocal.Columns.Add("Name", 200);
             lvLocal.Columns.Add("Date Modified", 130);
-            lvLocal.Columns.Add("Type", 80);
+            lvLocal.Columns.Add("Type", 150);
             lvLocal.Columns.Add("Size", 80);
             
             ContextMenuStrip localMenu = new ContextMenuStrip();
@@ -382,7 +382,7 @@ namespace FileTransferApp
             lvRemote = new ListView() { Location = new Point(5, 35), Size = new Size(splitExplorer.Panel2.Width - 10, splitExplorer.Panel2.Height - 80), View = View.Details, FullRowSelect = true, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right, Font = new Font("Segoe UI", 9.5f) };
             lvRemote.Columns.Add("Name", 200);
             lvRemote.Columns.Add("Date Modified", 130);
-            lvRemote.Columns.Add("Type", 80);
+            lvRemote.Columns.Add("Type", 150);
             lvRemote.Columns.Add("Size", 80);
 
             ContextMenuStrip remoteMenu = new ContextMenuStrip();
