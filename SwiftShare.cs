@@ -1149,7 +1149,7 @@ namespace FileTransferApp
                             byte[] resBytes = Encoding.UTF8.GetBytes(sb.ToString()); byte[] resLen = BitConverter.GetBytes(resBytes.Length); await ns.WriteAsync(resLen, 0, 4); await ns.WriteAsync(resBytes, 0, resBytes.Length);
                         }
                         else if (cmd == "TASK_START") { 
-                            TransferTask t = new TransferTask { TaskName = parts[1], TotalBytes = long.Parse(parts[2]), Direction = "IN", TaskId = parts.Length > 4 ? parts[4] : Guid.NewGuid().ToString(), RemoteIP = ((IPEndPoint)client.Client.RemoteEndPoint).Address.ToString(), RemotePort = parts.Length > 5 ? int.Parse(parts[5]) : 0 }; 
+                            TransferTask t = new TransferTask { TaskName = parts[1], TotalBytes = long.Parse(parts[2]), Direction = "IN", TotalItems = long.Parse(parts[3]), TaskId = parts.Length > 4 ? parts[4] : Guid.NewGuid().ToString(), RemoteIP = ((IPEndPoint)client.Client.RemoteEndPoint).Address.ToString(), RemotePort = parts.Length > 5 ? int.Parse(parts[5]) : 0 }; 
                             lock(activeInTasks) { activeInTasks[t.TaskId] = t; }
                             SafeInvoke(() => { CreateTaskCard(t); }); 
                         }
@@ -1162,7 +1162,11 @@ namespace FileTransferApp
                         }
                         else if (cmd == "MKDIR") {
                             string dirPath = parts[1];
-                            try { if (!Directory.Exists(dirPath)) Directory.CreateDirectory(dirPath); } catch {}
+                            string tId = parts.Length > 2 ? parts[2] : "";
+                            try { 
+                                if (!Directory.Exists(dirPath)) Directory.CreateDirectory(dirPath); 
+                                lock(activeInTasks) { if (activeInTasks.ContainsKey(tId)) { var t = activeInTasks[tId]; t.ProcessedItems++; t.UpdateProgress(t.TransferredBytes, 0); } }
+                            } catch {}
                         }
                         else if (cmd == "SYNC_REMOVE_TASK") {
                             string targetId = parts[1]; bool deleteFiles = parts.Length > 2 && parts[2] == "1";
