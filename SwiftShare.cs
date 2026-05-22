@@ -1095,28 +1095,43 @@ namespace FileTransferApp
                             long total = 0; 
                             Task writeTask = Task.Delay(0);
                             
-                            int toRead = (int)Math.Min((long)readBuf.Length, fs - total);
-                            int r = await ns.ReadAsync(readBuf, 0, toRead);
-                            while (r > 0) { 
-                                if (taskContext != null) { if (taskContext.IsCancelled) break; while (taskContext.IsPaused && !taskContext.IsCancelled) await Task.Delay(200); } 
-                                await writeTask;
+                            Socket sock = client.Client;
+                            using (SocketAsyncEventArgs saea = new SocketAsyncEventArgs())
+                            using (System.Threading.ManualResetEventSlim mre = new System.Threading.ManualResetEventSlim(false))
+                            {
+                                saea.Completed += (sender, args) => mre.Set();
                                 
-                                byte[] temp = readBuf; readBuf = writeBuf; writeBuf = temp;
-                                int bytesToWrite = r;
-                                writeTask = fstream.WriteAsync(writeBuf, 0, bytesToWrite);
-                                
-                                total += r; 
-                                if (taskContext != null) { 
-                                    taskContext.TransferredBytes += r; 
-                                    item.TransferredBytes += r; 
-                                    double speed = (taskContext.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001); 
-                                    taskContext.UpdateProgress(taskContext.TransferredBytes, speed); 
+                                int toRead = (int)Math.Min((long)readBuf.Length, fs - total);
+                                saea.SetBuffer(readBuf, 0, toRead);
+                                mre.Reset();
+                                if (sock.ReceiveAsync(saea)) mre.Wait();
+                                int r = saea.BytesTransferred;
+
+                                while (r > 0) { 
+                                    if (taskContext != null) { if (taskContext.IsCancelled) break; while (taskContext.IsPaused && !taskContext.IsCancelled) await Task.Delay(200); } 
+                                    await writeTask;
+                                    
+                                    byte[] temp = readBuf; readBuf = writeBuf; writeBuf = temp;
+                                    int bytesToWrite = r;
+                                    writeTask = fstream.WriteAsync(writeBuf, 0, bytesToWrite);
+                                    
+                                    total += r; 
+                                    if (taskContext != null) { 
+                                        taskContext.TransferredBytes += r; 
+                                        item.TransferredBytes += r; 
+                                        double speed = (taskContext.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001); 
+                                        taskContext.UpdateProgress(taskContext.TransferredBytes, speed); 
+                                    } 
+                                    if (total >= fs) break;
+
+                                    toRead = (int)Math.Min((long)readBuf.Length, fs - total);
+                                    saea.SetBuffer(readBuf, 0, toRead);
+                                    mre.Reset();
+                                    if (sock.ReceiveAsync(saea)) mre.Wait();
+                                    r = saea.BytesTransferred;
                                 } 
-                                if (total >= fs) break;
-                                toRead = (int)Math.Min((long)readBuf.Length, fs - total);
-                                r = await ns.ReadAsync(readBuf, 0, toRead);
-                            } 
-                            await writeTask;
+                                await writeTask;
+                            }
                         }
                         SafeInvoke(() => { RefreshLocalList(txtLocal.Text); });
                     }
