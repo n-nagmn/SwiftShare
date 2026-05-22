@@ -1087,51 +1087,43 @@ namespace FileTransferApp
                         if (taskContext != null) { taskContext.Files.Add(item); if (string.IsNullOrEmpty(taskContext.LocalBaseDir)) taskContext.LocalBaseDir = Path.GetDirectoryName(relPath); }
                         string saveDir = Path.GetDirectoryName(relPath); if (!Directory.Exists(saveDir)) Directory.CreateDirectory(saveDir);
                         sw.Start();
-                        using (FileStream fstream = new FileStream(relPath, FileMode.Create, FileAccess.Write, FileShare.None, 4194304, FileOptions.SequentialScan | FileOptions.Asynchronous)) { 
-                            byte[] buf1 = new byte[2097152]; 
-                            byte[] buf2 = new byte[2097152]; 
+                        using (FileStream fstream = new FileStream(relPath, FileMode.Create, FileAccess.Write, FileShare.None, 8388608, FileOptions.SequentialScan | FileOptions.Asynchronous)) { 
+                            if (fs > 0) fstream.SetLength(fs);
+                            int chunkSize = 8388608;
+                            byte[] buf1 = new byte[chunkSize]; 
+                            byte[] buf2 = new byte[chunkSize]; 
                             byte[] readBuf = buf1;
                             byte[] writeBuf = buf2;
                             long total = 0; 
                             Task writeTask = Task.Delay(0);
                             
-                            Socket sock = client.Client;
-                            using (SocketAsyncEventArgs saea = new SocketAsyncEventArgs())
-                            using (System.Threading.ManualResetEventSlim mre = new System.Threading.ManualResetEventSlim(false))
-                            {
-                                saea.Completed += (sender, args) => mre.Set();
+                            while (total < fs) {
+                                if (taskContext != null) { if (taskContext.IsCancelled) break; while (taskContext.IsPaused && !taskContext.IsCancelled) await Task.Delay(200); } 
                                 
-                                int toRead = (int)Math.Min((long)readBuf.Length, fs - total);
-                                saea.SetBuffer(readBuf, 0, toRead);
-                                mre.Reset();
-                                if (sock.ReceiveAsync(saea)) mre.Wait();
-                                int r = saea.BytesTransferred;
+                                int toReadTotal = (int)Math.Min((long)chunkSize, fs - total);
+                                int bytesReadInChunk = 0;
+                                
+                                while (bytesReadInChunk < toReadTotal) {
+                                    int r = await ns.ReadAsync(readBuf, bytesReadInChunk, toReadTotal - bytesReadInChunk);
+                                    if (r == 0) break;
+                                    bytesReadInChunk += r;
+                                }
+                                if (bytesReadInChunk == 0) break;
 
-                                while (r > 0) { 
-                                    if (taskContext != null) { if (taskContext.IsCancelled) break; while (taskContext.IsPaused && !taskContext.IsCancelled) await Task.Delay(200); } 
-                                    await writeTask;
-                                    
-                                    byte[] temp = readBuf; readBuf = writeBuf; writeBuf = temp;
-                                    int bytesToWrite = r;
-                                    writeTask = fstream.WriteAsync(writeBuf, 0, bytesToWrite);
-                                    
-                                    total += r; 
-                                    if (taskContext != null) { 
-                                        taskContext.TransferredBytes += r; 
-                                        item.TransferredBytes += r; 
-                                        double speed = (taskContext.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001); 
-                                        taskContext.UpdateProgress(taskContext.TransferredBytes, speed); 
-                                    } 
-                                    if (total >= fs) break;
-
-                                    toRead = (int)Math.Min((long)readBuf.Length, fs - total);
-                                    saea.SetBuffer(readBuf, 0, toRead);
-                                    mre.Reset();
-                                    if (sock.ReceiveAsync(saea)) mre.Wait();
-                                    r = saea.BytesTransferred;
-                                } 
                                 await writeTask;
-                            }
+                                
+                                byte[] temp = readBuf; readBuf = writeBuf; writeBuf = temp;
+                                writeTask = fstream.WriteAsync(writeBuf, 0, bytesReadInChunk);
+                                
+                                total += bytesReadInChunk; 
+                                if (taskContext != null) { 
+                                    taskContext.TransferredBytes += bytesReadInChunk; 
+                                    item.TransferredBytes += bytesReadInChunk; 
+                                    double speed = (taskContext.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001); 
+                                    taskContext.UpdateProgress(taskContext.TransferredBytes, speed); 
+                                } 
+                            } 
+                            await writeTask;
                         }
                         SafeInvoke(() => { RefreshLocalList(txtLocal.Text); });
                     }
