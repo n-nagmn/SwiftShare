@@ -107,6 +107,7 @@ namespace FileTransferApp
         private Color cardColor = Color.White;
         private Dictionary<string, string> typeCache = new Dictionary<string, string>();
         private Font typeFont = new Font("Segoe UI", 9f);
+        private Dictionary<string, string> peerNames = new Dictionary<string, string>();
 
         [STAThread]
         static void Main()
@@ -317,7 +318,7 @@ namespace FileTransferApp
             onlineTitle.Text = "ONLINE PEERS";
             onlineTitle.ForeColor = Color.Gray;
             onlineTitle.Font = new Font("Segoe UI", 9, FontStyle.Bold);
-            onlineTitle.Location = new Point(20, 110);
+            onlineTitle.Location = new Point(20, 160);
             onlineTitle.AutoSize = true;
             sidebar.Controls.Add(onlineTitle);
 
@@ -326,8 +327,8 @@ namespace FileTransferApp
             peerList.ForeColor = Color.White;
             peerList.BorderStyle = BorderStyle.None;
             peerList.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            peerList.Location = new Point(10, 140);
-            peerList.Size = new Size(240, 650);
+            peerList.Location = new Point(10, 190);
+            peerList.Size = new Size(240, 600);
             peerList.ItemHeight = 55;
             peerList.DrawMode = DrawMode.OwnerDrawFixed;
             peerList.DrawItem += PeerList_DrawItem;
@@ -341,6 +342,26 @@ namespace FileTransferApp
                     RefreshRemoteList();
                 }
             };
+            ContextMenuStrip peerMenu = new ContextMenuStrip();
+            ToolStripMenuItem renameItem = new ToolStripMenuItem("Set Alias / Name");
+            renameItem.Click += (s, e) => {
+                if (peerList.SelectedItem == null) return;
+                string ep = peerList.SelectedItem.ToString().Split(' ')[0]; string ip = ep.Split(':')[0];
+                string curName = peerNames.ContainsKey(ip) ? peerNames[ip] : "";
+                Form pForm = new Form() { Width = 300, Height = 130, FormBorderStyle = FormBorderStyle.FixedDialog, Text = "Set Peer Name", StartPosition = FormStartPosition.CenterParent, MaximizeBox = false, MinimizeBox = false };
+                TextBox tb = new TextBox() { Left = 20, Top = 20, Width = 240, Text = curName };
+                Button okBtn = new Button() { Text = "OK", Left = 160, Top = 50, Width = 100, DialogResult = DialogResult.OK };
+                pForm.Controls.Add(tb); pForm.Controls.Add(okBtn); pForm.AcceptButton = okBtn;
+                if (pForm.ShowDialog() == DialogResult.OK) {
+                    string newName = tb.Text.Trim();
+                    if (string.IsNullOrEmpty(newName)) { peerNames.Remove(ip); try { using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\SwiftShare\PeerNames")) { key.DeleteValue(ip, false); } } catch {} }
+                    else { peerNames[ip] = newName; try { using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\SwiftShare\PeerNames")) { key.SetValue(ip, newName); } } catch {} }
+                    peerList.Invalidate();
+                }
+            };
+            peerMenu.Items.Add(renameItem);
+            peerList.ContextMenuStrip = peerMenu;
+            peerList.MouseDown += (s, e) => { if (e.Button == MouseButtons.Right) { int idx = peerList.IndexFromPoint(e.Location); if (idx != ListBox.NoMatches) peerList.SelectedIndex = idx; } };
             sidebar.Controls.Add(peerList);
 
             dashboard = new Panel();
