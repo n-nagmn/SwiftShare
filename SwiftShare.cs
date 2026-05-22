@@ -13,7 +13,6 @@ using System.Diagnostics;
 using Microsoft.Win32;
 using System.Runtime.InteropServices;
 using System.Runtime;
-using System.IO.MemoryMappedFiles;
 
 namespace FileTransferApp
 {
@@ -118,20 +117,25 @@ namespace FileTransferApp
         static void Main()
         {
             try {
-                Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.RealTime;
-                GCSettings.LatencyMode = GCLatencyMode.SustainedLowLatency;
-            } catch {}
-            
-            Application.EnableVisualStyles();
+                try {
+                    Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.High;
+                    GCSettings.LatencyMode = GCLatencyMode.SustainedLowLatency;
+                } catch {}
+                
+                Application.EnableVisualStyles();
+                Application.SetCompatibleTextRenderingDefault(false);
+                
+                Application.ThreadException += (s, e) => {
+                    MessageBox.Show("Thread Error:\n" + e.Exception.ToString(), "SwiftShare Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                };
+                AppDomain.CurrentDomain.UnhandledException += (s, e) => {
+                    MessageBox.Show("Fatal error:\n" + e.ExceptionObject.ToString(), "SwiftShare Fatal Error");
+                };
 
-            Application.SetCompatibleTextRenderingDefault(false);
-            Application.ThreadException += (s, e) => {
-                MessageBox.Show("Error:\n" + e.Exception.Message, "SwiftShare Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            };
-            AppDomain.CurrentDomain.UnhandledException += (s, e) => {
-                MessageBox.Show("Fatal error.", "SwiftShare Fatal Error");
-            };
-            Application.Run(new SwiftShare());
+                Application.Run(new SwiftShare());
+            } catch (Exception ex) {
+                MessageBox.Show("Startup Crash:\n" + ex.ToString(), "SwiftShare Crash", MessageBoxButtons.OK, MessageBoxIcon.Stop);
+            }
         }
 
         public SwiftShare()
@@ -190,17 +194,18 @@ namespace FileTransferApp
             using (Bitmap bmp = new Bitmap(32, 32))
             using (Graphics g = Graphics.FromImage(bmp)) {
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                // Background Circle with Gradient
                 using (System.Drawing.Drawing2D.LinearGradientBrush brush = new System.Drawing.Drawing2D.LinearGradientBrush(new Point(0, 0), new Point(32, 32), Color.FromArgb(63, 81, 181), Color.FromArgb(48, 63, 159))) {
                     g.FillEllipse(brush, 2, 2, 28, 28);
                 }
-                // Stylish S/Arrow Motif
                 Point[] pts = { new Point(8, 16), new Point(16, 8), new Point(24, 16), new Point(16, 16), new Point(16, 24) };
                 using (Pen p = new Pen(Color.White, 3)) {
                     p.LineJoin = System.Drawing.Drawing2D.LineJoin.Round;
                     g.DrawLines(p, pts);
                 }
-                return Icon.FromHandle(bmp.GetHicon());
+                IntPtr hIcon = bmp.GetHicon();
+                Icon icon = (Icon)Icon.FromHandle(hIcon).Clone();
+                DestroyIcon(hIcon);
+                return icon;
             }
         }
 
@@ -209,9 +214,8 @@ namespace FileTransferApp
             try {
                 using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\SwiftShare", false)) {
                     if (key != null) {
-                        if (key.GetValue("SplitMainDist") != null) splitMain.SplitterDistance = (int)key.GetValue("SplitMainDist");
-                    } else {
-                        splitMain.SplitterDistance = 670;
+                        int dist = (int)key.GetValue("SplitMainDist", 670);
+                        if (dist > 50 && dist < splitMain.Height - 50) splitMain.SplitterDistance = dist;
                     }
                 }
             } catch { }
@@ -406,11 +410,11 @@ namespace FileTransferApp
 
             splitExplorer = new SplitContainer();
             splitExplorer.Location = new Point(10, 35);
-            splitExplorer.Size = new Size(explorerCard.Width - 20, explorerCard.Height - 45);
-            splitExplorer.SplitterDistance = splitExplorer.Width / 2;
+            splitExplorer.Size = new Size(Math.Max(10, explorerCard.Width - 20), Math.Max(10, explorerCard.Height - 45));
+            if (splitExplorer.Width > 100) splitExplorer.SplitterDistance = splitExplorer.Width / 2;
             splitExplorer.IsSplitterFixed = true;
             splitExplorer.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            splitExplorer.Resize += (s, e) => { if (splitExplorer.Width > 0) splitExplorer.SplitterDistance = splitExplorer.Width / 2; };
+            splitExplorer.Resize += (s, e) => { if (splitExplorer.Width > 100) splitExplorer.SplitterDistance = splitExplorer.Width / 2; };
             explorerCard.Controls.Add(splitExplorer);
 
             // Left Pane (Local)
