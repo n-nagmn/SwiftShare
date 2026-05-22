@@ -890,6 +890,18 @@ namespace FileTransferApp
             foreach (var item in task.Files) {
                 if (task.IsCancelled) break;
                 
+                if (item.TotalSize == 0) {
+                    try {
+                        using (TcpClient client = new TcpClient()) {
+                            await client.ConnectAsync(ip, port);
+                            using (NetworkStream ns = client.GetStream()) {
+                                await SendCommandAsync(ns, "PUSH|" + item.RelativePath + "|0|" + task.TaskId + "|0|0");
+                            }
+                        }
+                    } catch { }
+                    continue;
+                }
+
                 int workerCount = Math.Min(32, Environment.ProcessorCount * 2);
                 long segmentSize = item.TotalSize / workerCount;
                 Task[] workers = new Task[workerCount];
