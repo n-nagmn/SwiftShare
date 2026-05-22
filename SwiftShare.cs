@@ -859,6 +859,7 @@ namespace FileTransferApp
             Panel card = new Panel { Height = 70, BackColor = Color.White, Margin = new Padding(0, 0, 0, 10), BorderStyle = BorderStyle.FixedSingle };
             card.MouseEnter += (s, e) => historyFlow.Focus();
             task.Card = card;
+            card.Tag = task;
             Label nameLbl = new Label { Text = (task.Direction == "OUT" ? "↗ " : "↘ ") + task.TaskName, Font = new Font("Segoe UI Semibold", 10), Location = new Point(10, 10), Size = new Size(300, 20) };
             card.Controls.Add(nameLbl);
             ProgressBar pb = new ProgressBar { Location = new Point(10, 35), Height = 10 };
