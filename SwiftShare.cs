@@ -932,8 +932,9 @@ namespace FileTransferApp
                             if (File.Exists(path)) {
                                 string relPath = Path.GetFileName(path);
                                 string remotePath = Path.Combine(remoteDestDir, relPath).Replace("\\", "/");
-                                lock(task.Files) { task.Files.Add(new TransferItem { RelativePath = relPath, TotalSize = new FileInfo(path).Length }); }
-                                await StreamSingleFilePersistent(ns, path, remotePath, task, sw, relPath);
+                                var item = new TransferItem { RelativePath = relPath, TotalSize = new FileInfo(path).Length };
+                                lock(task.Files) { task.Files.Add(item); }
+                                await StreamSingleFilePersistent(ns, path, remotePath, task, sw, relPath, item);
                                 processedItems++;
                                 task.ProcessedItems = processedItems;
                                 task.UpdateProgress(task.TransferredBytes, (task.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001));
@@ -980,7 +981,7 @@ namespace FileTransferApp
                         try {
                         string relDir = currentDir.Substring(rootDir.Length).Replace("\\", "/");
                         string remoteDir = Path.Combine(remoteDestDir, relDir).Replace("\\", "/");
-                        lock(task.Files) { task.Files.Add(new TransferItem { RelativePath = relDir, TotalSize = 0 }); }
+                        lock(task.Files) { task.Files.Add(new TransferItem { RelativePath = relDir, TotalSize = 0, VerificationResult = "Verified" }); }
                         await SendCommandAsync(ns, "MKDIR|" + remoteDir + "|" + task.TaskId + "|" + relDir);
                         currentProcessed++;
                         task.ProcessedItems = currentProcessed;
@@ -989,8 +990,9 @@ namespace FileTransferApp
                         foreach (string file in Directory.GetFiles(currentDir)) {
                         if (task.IsCancelled) break;
                         string relPath = file.Substring(rootDir.Length).Replace("\\", "/");
-                        lock(task.Files) { task.Files.Add(new TransferItem { RelativePath = relPath, TotalSize = new FileInfo(file).Length }); }
-                        await StreamSingleFilePersistent(ns, file, Path.Combine(remoteDestDir, relPath), task, sw, relPath);
+                        var item = new TransferItem { RelativePath = relPath, TotalSize = new FileInfo(file).Length };
+                        lock(task.Files) { task.Files.Add(item); }
+                        await StreamSingleFilePersistent(ns, file, Path.Combine(remoteDestDir, relPath), task, sw, relPath, item);
                         currentProcessed++;
                         task.ProcessedItems = currentProcessed;
                         task.UpdateProgress(task.TransferredBytes, (task.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001));
@@ -1005,7 +1007,7 @@ namespace FileTransferApp
                         return currentProcessed;
                         }
 
-                        private async Task StreamSingleFilePersistent(NetworkStream ns, string localPath, string remotePath, TransferTask task, Stopwatch sw, string relPathForTree)
+                        private async Task StreamSingleFilePersistent(NetworkStream ns, string localPath, string remotePath, TransferTask task, Stopwatch sw, string relPathForTree, TransferItem item)
                         {
                         try {
                         long fsLen = new FileInfo(localPath).Length;
@@ -1035,6 +1037,9 @@ namespace FileTransferApp
                         await wT;
                         }
                         }
+                        string resp = await ReadCommandAsync(ns);
+                        if (resp == "OK") item.VerificationResult = "Verified";
+                        else item.VerificationResult = "Verification Failed";
                         } catch { throw; } 
                         }
         private void CreateTaskCard(TransferTask task)
@@ -1280,7 +1285,7 @@ namespace FileTransferApp
                                 if (!Directory.Exists(dirPath)) Directory.CreateDirectory(dirPath); 
                                 lock(activeInTasks) { if (activeInTasks.ContainsKey(tId)) { 
                                     var t = activeInTasks[tId]; t.ProcessedItems++; 
-                                    lock(t.Files) { t.Files.Add(new TransferItem { RelativePath = relDir, TotalSize = 0, DestinationPath = dirPath }); }
+                                    lock(t.Files) { t.Files.Add(new TransferItem { RelativePath = relDir, TotalSize = 0, DestinationPath = dirPath, VerificationResult = "Verified" }); }
                                     t.UpdateProgress(t.TransferredBytes, 0); 
                                 } }
                             } catch {}
@@ -1355,8 +1360,11 @@ namespace FileTransferApp
                                             string actualHash = BitConverter.ToString(md5.ComputeHash(stream)).Replace("-", "").ToLower();
                                             item.VerificationResult = (actualHash == expectedHash) ? "Verified" : "Verification Failed";
                                         }
+                                    } else {
+                                        item.VerificationResult = "Verified";
                                     }
                                 }
+                                await SendCommandAsync(ns, item.VerificationResult == "Verified" ? "OK" : "VERIFY_FAIL");
                                 lock(activeInTasks) { if (activeInTasks.ContainsKey(tId)) { var t = activeInTasks[tId]; t.ProcessedItems++; t.UpdateProgress(t.TransferredBytes, 0); } }
                             } catch { if (taskContext != null) taskContext.CompleteTask("Write Error"); }
                         }
