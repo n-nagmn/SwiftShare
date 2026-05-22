@@ -1097,22 +1097,30 @@ namespace FileTransferApp
                         string saveDir = Path.GetDirectoryName(relPath); if (!Directory.Exists(saveDir)) Directory.CreateDirectory(saveDir);
                         sw.Start();
                         try {
-                            using (FileStream fstream = new FileStream(relPath, FileMode.Create, FileAccess.Write, FileShare.None, 1048576)) { 
-                                byte[] buf = new byte[1048576]; long total = 0; 
-                                while (total < fs) { 
-                                    if (taskContext != null) { if (taskContext.IsCancelled) break; while (taskContext.IsPaused && !taskContext.IsCancelled) await Task.Delay(200); } 
-                                    int toRead = (int)Math.Min((long)buf.Length, fs - total); 
-                                    int r = await ns.ReadAsync(buf, 0, toRead); 
-                                    if (r == 0) break; 
-                                    await fstream.WriteAsync(buf, 0, r); 
-                                    total += r; 
-                                    if (taskContext != null) { 
-                                        System.Threading.Interlocked.Add(ref taskContext.transferredBytesBacking, r);
-                                        System.Threading.Interlocked.Add(ref item.transferredBytesBacking, r);
-                                        double speed = (taskContext.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001); 
-                                        taskContext.UpdateProgress(taskContext.TransferredBytes, speed); 
+                            if (fs == 0) { using (File.Create(relPath)) {} }
+                            else {
+                                using (FileStream fstream = new FileStream(relPath, FileMode.Create, FileAccess.Write, FileShare.None, 4194304, FileOptions.SequentialScan | FileOptions.Asynchronous)) { 
+                                    if (fs > 0) fstream.SetLength(fs);
+                                    byte[] buf1 = new byte[2097152]; byte[] buf2 = new byte[2097152]; 
+                                    byte[] rB = buf1; byte[] wB = buf2; long total = 0; Task wT = Task.Delay(0);
+                                    int r = await ns.ReadAsync(rB, 0, (int)Math.Min((long)rB.Length, fs - total));
+                                    while (r > 0) { 
+                                        if (taskContext != null) { if (taskContext.IsCancelled) break; while (taskContext.IsPaused && !taskContext.IsCancelled) await Task.Delay(200); } 
+                                        await wT;
+                                        byte[] tmp = rB; rB = wB; wB = tmp;
+                                        wT = fstream.WriteAsync(wB, 0, r);
+                                        total += r; 
+                                        if (taskContext != null) { 
+                                            System.Threading.Interlocked.Add(ref taskContext.transferredBytesBacking, r);
+                                            System.Threading.Interlocked.Add(ref item.transferredBytesBacking, r);
+                                            double spd = (taskContext.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001); 
+                                            taskContext.UpdateProgress(taskContext.TransferredBytes, spd); 
+                                        } 
+                                        if (total >= fs) break;
+                                        r = await ns.ReadAsync(rB, 0, (int)Math.Min((long)rB.Length, fs - total));
                                     } 
-                                } 
+                                    await wT;
+                                }
                             }
                         } catch { if (taskContext != null) taskContext.CompleteTask("Write Error"); }
                         SafeInvoke(() => { RefreshLocalList(txtLocal.Text); });
