@@ -843,7 +843,7 @@ namespace FileTransferApp
                     using (TcpClient client = new TcpClient()) {
                         client.NoDelay = true; await client.ConnectAsync(ip, port);
                         using (NetworkStream ns = client.GetStream()) {
-                            await SendCommandAsync(ns, "PUSH|" + item.RelativePath + "|" + item.TotalSize);
+                            await SendCommandAsync(ns, "PUSH|" + item.RelativePath + "|" + item.TotalSize + "|" + task.TaskId);
                             using (FileStream fs = new FileStream(item.LocalPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)) { byte[] buf = new byte[1024 * 1024]; int r; while ((r = await fs.ReadAsync(buf, 0, buf.Length)) > 0) { if (task.IsCancelled) break; while (task.IsPaused && !task.IsCancelled) await Task.Delay(200); await ns.WriteAsync(buf, 0, r); totalSent += (long)r; item.TransferredBytes += (long)r; double speed = (totalSent / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001); task.UpdateProgress(totalSent, speed); } }
                         }
                     }
@@ -959,11 +959,12 @@ namespace FileTransferApp
             } catch { }
         }
 
-        private TransferTask currentInTask;
+        private Dictionary<string, TransferTask> activeInTasks = new Dictionary<string, TransferTask>();
 
         private async Task HandleIncomingConnection(TcpClient client)
         {
             Stopwatch sw = new Stopwatch();
+            TransferTask taskContext = null;
             try {
                 using (NetworkStream ns = client.GetStream()) {
                     string cmdStr = await ReadCommandAsync(ns); string[] parts = cmdStr.Split('|'); string cmd = parts[0];
@@ -979,8 +980,17 @@ namespace FileTransferApp
                         else if (Directory.Exists(reqPath)) { foreach (FileSystemInfo fsi in new DirectoryInfo(reqPath).GetFileSystemInfos()) { try { if ((fsi.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden) continue; string typeName = GetTypeName(fsi.FullName, fsi is DirectoryInfo); if (fsi is DirectoryInfo) sb.AppendLine("D|" + fsi.Name + "||" + fsi.LastWriteTime.Ticks + "|" + typeName); else sb.AppendLine("F|" + fsi.Name + "|" + ((FileInfo)fsi).Length + "|" + fsi.LastWriteTime.Ticks + "|" + typeName); } catch {} } }
                         byte[] resBytes = Encoding.UTF8.GetBytes(sb.ToString()); byte[] resLen = BitConverter.GetBytes(resBytes.Length); await ns.WriteAsync(resLen, 0, 4); await ns.WriteAsync(resBytes, 0, resBytes.Length);
                     }
-                    else if (cmd == "TASK_START") { currentInTask = new TransferTask { TaskName = parts[1], TotalBytes = long.Parse(parts[2]), Direction = "IN", TaskId = parts.Length > 4 ? parts[4] : Guid.NewGuid().ToString(), RemoteIP = ((IPEndPoint)client.Client.RemoteEndPoint).Address.ToString(), RemotePort = parts.Length > 5 ? int.Parse(parts[5]) : 0 }; SafeInvoke(() => { CreateTaskCard(currentInTask); }); }
-                    else if (cmd == "TASK_END") { if (currentInTask != null) { currentInTask.CompleteTask("Completed"); currentInTask = null; } }
+                    else if (cmd == "TASK_START") { 
+                        TransferTask t = new TransferTask { TaskName = parts[1], TotalBytes = long.Parse(parts[2]), Direction = "IN", TaskId = parts.Length > 4 ? parts[4] : Guid.NewGuid().ToString(), RemoteIP = ((IPEndPoint)client.Client.RemoteEndPoint).Address.ToString(), RemotePort = parts.Length > 5 ? int.Parse(parts[5]) : 0 }; 
+                        lock(activeInTasks) { activeInTasks[t.TaskId] = t; }
+                        SafeInvoke(() => { CreateTaskCard(t); }); 
+                    }
+                    else if (cmd == "TASK_END") { 
+                        string tId = parts.Length > 1 ? parts[1] : "";
+                        TransferTask t = null;
+                        lock(activeInTasks) { if (activeInTasks.ContainsKey(tId)) { t = activeInTasks[tId]; activeInTasks.Remove(tId); } }
+                        if (t != null) t.CompleteTask("Completed"); 
+                    }
                     else if (cmd == "SYNC_REMOVE_TASK") {
                         string targetId = parts[1]; bool deleteFiles = parts.Length > 2 && parts[2] == "1";
                         SafeInvoke(async () => {
@@ -1001,14 +1011,17 @@ namespace FileTransferApp
                     else if (cmd == "TASK_REMOTE_DELETE") { string[] paths = parts[1].Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries); foreach(var p in paths) { try { if (File.Exists(p)) { File.SetAttributes(p, FileAttributes.Normal); File.Delete(p); } else if (Directory.Exists(p)) Directory.Delete(p, true); } catch {} } SafeInvoke(() => RefreshLocalList(txtLocal.Text)); }
                     else if (cmd == "TASK_PULL") { int cp = int.Parse(parts[1]); string ld = parts[2]; string[] rp = parts[3].Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries); string ci = ((IPEndPoint)client.Client.RemoteEndPoint).Address.ToString(); string bd = Path.GetDirectoryName(rp[0]); ProcessOutgoingItems(ci, cp, rp, bd, ld); }
                     else if (cmd == "PUSH") {
-                        string relPath = parts[1]; long fs = long.Parse(parts[2]); TransferItem item = new TransferItem { RelativePath = relPath, TotalSize = fs, LocalPath = "", DestinationPath = relPath }; if (currentInTask != null) { currentInTask.Files.Add(item); if (string.IsNullOrEmpty(currentInTask.LocalBaseDir)) currentInTask.LocalBaseDir = Path.GetDirectoryName(relPath); }
+                        string relPath = parts[1]; long fs = long.Parse(parts[2]); string tId = parts.Length > 3 ? parts[3] : "";
+                        lock(activeInTasks) { if (activeInTasks.ContainsKey(tId)) taskContext = activeInTasks[tId]; }
+                        TransferItem item = new TransferItem { RelativePath = relPath, TotalSize = fs, LocalPath = "", DestinationPath = relPath }; 
+                        if (taskContext != null) { taskContext.Files.Add(item); if (string.IsNullOrEmpty(taskContext.LocalBaseDir)) taskContext.LocalBaseDir = Path.GetDirectoryName(relPath); }
                         string saveDir = Path.GetDirectoryName(relPath); if (!Directory.Exists(saveDir)) Directory.CreateDirectory(saveDir);
                         sw.Start();
-                        using (FileStream fstream = new FileStream(relPath, FileMode.Create, FileAccess.Write)) { byte[] buf = new byte[1024 * 1024]; long total = 0; while (total < fs) { if (currentInTask != null) { if (currentInTask.IsCancelled) break; while (currentInTask.IsPaused && !currentInTask.IsCancelled) await Task.Delay(200); } int toRead = (int)Math.Min((long)buf.Length, fs - total); int r = await ns.ReadAsync(buf, 0, toRead); if (r == 0) break; await fstream.WriteAsync(buf, 0, r); total += r; if (currentInTask != null) { currentInTask.TransferredBytes += r; item.TransferredBytes += r; double speed = (currentInTask.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001); currentInTask.UpdateProgress(currentInTask.TransferredBytes, speed); } } }
+                        using (FileStream fstream = new FileStream(relPath, FileMode.Create, FileAccess.Write)) { byte[] buf = new byte[1024 * 1024]; long total = 0; while (total < fs) { if (taskContext != null) { if (taskContext.IsCancelled) break; while (taskContext.IsPaused && !taskContext.IsCancelled) await Task.Delay(200); } int toRead = (int)Math.Min((long)buf.Length, fs - total); int r = await ns.ReadAsync(buf, 0, toRead); if (r == 0) break; await fstream.WriteAsync(buf, 0, r); total += r; if (taskContext != null) { taskContext.TransferredBytes += r; item.TransferredBytes += r; double speed = (taskContext.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001); taskContext.UpdateProgress(taskContext.TransferredBytes, speed); } } }
                         SafeInvoke(() => { RefreshLocalList(txtLocal.Text); });
                     }
                 }
-            } catch { SafeInvoke(() => { if (currentInTask != null) currentInTask.CompleteTask("Error"); }); }
+            } catch { SafeInvoke(() => { if (taskContext != null) taskContext.CompleteTask("Error"); }); }
             finally { client.Close(); }
         }
 
