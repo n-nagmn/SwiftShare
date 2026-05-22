@@ -1218,10 +1218,12 @@ namespace FileTransferApp
                                             r = await ns.ReadAsync(rB, 0, (int)Math.Min((long)rB.Length, fs - total));
                                         } 
                                         await wT;
-                                    }
-                                }
-                            } catch { if (taskContext != null) taskContext.CompleteTask("Write Error"); }
-                        }
+                                        }
+                                        }
+                                        lock(activeInTasks) { if (activeInTasks.ContainsKey(tId)) { var t = activeInTasks[tId]; t.ProcessedItems++; t.UpdateProgress(t.TransferredBytes, 0); } }
+                                        } catch { if (taskContext != null) taskContext.CompleteTask("Write Error"); }
+                                        }
+
                         else if (cmd == "EXCHANGE_ALIASES") {
                             string peerData = parts.Length > 1 ? parts[1] : "";
                             MergeAliasSyncString(peerData);
