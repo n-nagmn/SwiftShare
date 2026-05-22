@@ -1260,9 +1260,16 @@ namespace FileTransferApp
                     if (msg.StartsWith("SWIFTSHARE_V1")) {
                         string[] parts = msg.Split('|'); string remoteSpeed = parts[1]; int remotePort = int.Parse(parts[2]); string remoteInstanceId = parts[3];
                         if (remoteInstanceId == this.instanceId) continue;
-                        if (localIps.Contains(ip)) ip = "127.0.0.1"; else if (ip.StartsWith("192.168.56.") || ip.StartsWith("172.")) continue;
-                        string remoteEndPoint = ip + ":" + remotePort; peerLastSeen[remoteEndPoint] = DateTime.Now; string displayText = remoteEndPoint + " (" + remoteSpeed + ")";
-                        SafeInvoke(() => { int existingIndex = -1; for(int i=0; i<peerList.Items.Count; i++) { if (peerList.Items[i].ToString().StartsWith(remoteEndPoint)) { existingIndex = i; break; } } if (existingIndex >= 0) peerList.Items[existingIndex] = displayText; else peerList.Items.Add(displayText); });
+                        if (localIps.Contains(ip)) ip = "127.0.0.1";
+                        string remoteEndPoint = ip + ":" + remotePort; 
+                        bool isNew = !peerLastSeen.ContainsKey(remoteEndPoint);
+                        peerLastSeen[remoteEndPoint] = DateTime.Now; 
+                        string displayText = remoteEndPoint + " (" + remoteSpeed + ")";
+                        SafeInvoke(() => { 
+                            int existingIndex = -1; for(int i=0; i<peerList.Items.Count; i++) { if (peerList.Items[i].ToString().StartsWith(remoteEndPoint)) { existingIndex = i; break; } } 
+                            if (existingIndex >= 0) peerList.Items[existingIndex] = displayText; 
+                            else { peerList.Items.Add(displayText); if (isNew) InitiateAliasSync(ip, remotePort); }
+                        });
                     }
                     else if (msg.StartsWith("SYNC_ALIAS")) {
                         string[] parts = msg.Split('|');
