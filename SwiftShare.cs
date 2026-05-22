@@ -1103,8 +1103,11 @@ namespace FileTransferApp
         private void PopulateTaskTree(TransferTask task)
         {
             Panel pnl = new Panel { Location = new Point(10, 75), Size = new Size(task.Card.ClientSize.Width - 20, 160), BorderStyle = BorderStyle.None, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right };
-            TransparentTreeView tv = new TransparentTreeView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, Font = new Font("Segoe UI", 9), ImageList = imageList };
-            tv.MouseEnter += (s, e) => tv.Focus();
+            TreeView tv = new TreeView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Segoe UI", 9), ImageList = imageList, ShowLines = true, ShowPlusMinus = true };
+            
+            // Standard WinForms fix for mouse wheel: focus on hover
+            tv.MouseEnter += (s, e) => { tv.Focus(); };
+            
             task.TreePanel = pnl; task.FileTree = tv; pnl.Controls.Add(tv); task.Card.Controls.Add(pnl);
 
             if (task.Files.Count > 50000) {
@@ -1115,23 +1118,25 @@ namespace FileTransferApp
 
             tv.BeginUpdate();
             try {
+                tv.Nodes.Clear();
                 lock(task.Files) {
                     foreach (var file in task.Files) {
                         string[] parts = file.RelativePath.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
                         TreeNodeCollection currentNodes = tv.Nodes; TreeNode lastNode = null;
                         for (int i = 0; i < parts.Length; i++) {
                             string part = parts[i];
-                            bool isFolder = i < parts.Length - 1;
-                            TreeNode nextNode = null; foreach (TreeNode node in currentNodes) { if (node.Text == part) { nextNode = node; break; } }
+                            bool isFolder = (i < parts.Length - 1) || (file.TotalSize == 0); // Logic for folders
+                            TreeNode nextNode = null; 
+                            foreach (TreeNode node in currentNodes) { if (node.Text == part) { nextNode = node; break; } }
                             if (nextNode == null) { 
                                 nextNode = new TreeNode(part); 
-                                int iconIdx = GetIconIndex(part, isFolder);
+                                // Get the correct icon from system
+                                int iconIdx = GetIconIndex(isFolder ? "folder" : part, isFolder);
                                 nextNode.ImageIndex = nextNode.SelectedImageIndex = iconIdx; 
                                 currentNodes.Add(nextNode); 
                             }
                             currentNodes = nextNode.Nodes; lastNode = nextNode;
                         }
-
                         file.NodeRef = lastNode;
                     }
                 }
