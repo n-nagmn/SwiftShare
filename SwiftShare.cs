@@ -879,10 +879,25 @@ namespace FileTransferApp
                 if (task.IsCancelled) break; while (task.IsPaused && !task.IsCancelled) await Task.Delay(200);
                 try {
                     using (TcpClient client = new TcpClient()) {
-                        client.NoDelay = true; await client.ConnectAsync(ip, port);
+                        client.NoDelay = true;
+                        client.SendBufferSize = 8388608;
+                        client.ReceiveBufferSize = 8388608;
+                        await client.ConnectAsync(ip, port);
                         using (NetworkStream ns = client.GetStream()) {
                             await SendCommandAsync(ns, "PUSH|" + item.RelativePath + "|" + item.TotalSize + "|" + task.TaskId);
-                            using (FileStream fs = new FileStream(item.LocalPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)) { byte[] buf = new byte[1024 * 1024]; int r; while ((r = await fs.ReadAsync(buf, 0, buf.Length)) > 0) { if (task.IsCancelled) break; while (task.IsPaused && !task.IsCancelled) await Task.Delay(200); await ns.WriteAsync(buf, 0, r); totalSent += (long)r; item.TransferredBytes += (long)r; double speed = (totalSent / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001); task.UpdateProgress(totalSent, speed); } }
+                            using (FileStream fs = new FileStream(item.LocalPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 8388608, FileOptions.SequentialScan | FileOptions.Asynchronous)) { 
+                                byte[] buf = new byte[8388608]; 
+                                int r; 
+                                while ((r = await fs.ReadAsync(buf, 0, buf.Length)) > 0) { 
+                                    if (task.IsCancelled) break; 
+                                    while (task.IsPaused && !task.IsCancelled) await Task.Delay(200); 
+                                    await ns.WriteAsync(buf, 0, r); 
+                                    totalSent += (long)r; 
+                                    item.TransferredBytes += (long)r; 
+                                    double speed = (totalSent / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001); 
+                                    task.UpdateProgress(totalSent, speed); 
+                                } 
+                            }
                         }
                     }
                 } catch { task.CompleteTask("Error"); }
@@ -1001,6 +1016,9 @@ namespace FileTransferApp
 
         private async Task HandleIncomingConnection(TcpClient client)
         {
+            client.NoDelay = true;
+            client.ReceiveBufferSize = 8388608;
+            client.SendBufferSize = 8388608;
             Stopwatch sw = new Stopwatch();
             TransferTask taskContext = null;
             try {
@@ -1055,8 +1073,31 @@ namespace FileTransferApp
                         if (taskContext != null) { taskContext.Files.Add(item); if (string.IsNullOrEmpty(taskContext.LocalBaseDir)) taskContext.LocalBaseDir = Path.GetDirectoryName(relPath); }
                         string saveDir = Path.GetDirectoryName(relPath); if (!Directory.Exists(saveDir)) Directory.CreateDirectory(saveDir);
                         sw.Start();
-                        using (FileStream fstream = new FileStream(relPath, FileMode.Create, FileAccess.Write)) { byte[] buf = new byte[1024 * 1024]; long total = 0; while (total < fs) { if (taskContext != null) { if (taskContext.IsCancelled) break; while (taskContext.IsPaused && !taskContext.IsCancelled) await Task.Delay(200); } int toRead = (int)Math.Min((long)buf.Length, fs - total); int r = await ns.ReadAsync(buf, 0, toRead); if (r == 0) break; await fstream.WriteAsync(buf, 0, r); total += r; if (taskContext != null) { taskContext.TransferredBytes += r; item.TransferredBytes += r; double speed = (taskContext.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001); taskContext.UpdateProgress(taskContext.TransferredBytes, speed); } } }
+                        using (FileStream fstream = new FileStream(relPath, FileMode.Create, FileAccess.Write, FileShare.None, 8388608, FileOptions.SequentialScan | FileOptions.Asynchronous)) { 
+                            byte[] buf = new byte[8388608]; 
+                            long total = 0; 
+                            while (total < fs) { 
+                                if (taskContext != null) { if (taskContext.IsCancelled) break; while (taskContext.IsPaused && !taskContext.IsCancelled) await Task.Delay(200); } 
+                                int toRead = (int)Math.Min((long)buf.Length, fs - total); 
+                                int r = await ns.ReadAsync(buf, 0, toRead); 
+                                if (r == 0) break; 
+                                await fstream.WriteAsync(buf, 0, r); 
+                                total += r; 
+                                if (taskContext != null) { 
+                                    taskContext.TransferredBytes += r; 
+                                    item.TransferredBytes += r; 
+                                    double speed = (taskContext.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001); 
+                                    taskContext.UpdateProgress(taskContext.TransferredBytes, speed); 
+                                } 
+                            } 
+                        }
                         SafeInvoke(() => { RefreshLocalList(txtLocal.Text); });
+                    }
+                    else if (cmd == "EXCHANGE_ALIASES") {
+                        string peerData = parts.Length > 1 ? parts[1] : "";
+                        MergeAliasSyncString(peerData);
+                        string myData = GetAliasSyncString();
+                        await SendCommandAsync(ns, "EXCHANGE_ALIASES_REPLY|" + myData);
                     }
                 }
             } catch { SafeInvoke(() => { if (taskContext != null) taskContext.CompleteTask("Error"); }); }
