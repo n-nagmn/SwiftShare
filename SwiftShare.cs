@@ -1185,12 +1185,40 @@ namespace FileTransferApp
                             string reqPath = parts.Length > 1 ? parts[1] : ""; StringBuilder sb = new StringBuilder();
                             if (string.IsNullOrEmpty(reqPath)) { 
                                 foreach (var d in DriveInfo.GetDrives()) {
-                                    string vol = ""; try { if (d.IsReady) vol = d.VolumeLabel; } catch {}
-                                    string name = string.IsNullOrEmpty(vol) ? d.Name : vol + " (" + d.Name.TrimEnd('\\') + ")";
-                                    sb.AppendLine("DRIVE|" + name + "|" + d.Name + "|||" + GetTypeName(d.Name, true, false)); 
+                                    string name = d.Name;
+                                    string vol = ""; string typeName = "Drive";
+                                    try { 
+                                        // Speed optimization: Use Task.Run with timeout for DriveInfo access if it's potentially a network/slow drive
+                                        bool isReady = false;
+                                        if (d.DriveType == DriveType.Network || d.DriveType == DriveType.Removable) {
+                                            var readyTask = Task.Run(() => d.IsReady);
+                                            if (readyTask.Wait(150)) isReady = readyTask.Result;
+                                        } else {
+                                            isReady = d.IsReady;
+                                        }
+
+                                        if (isReady) {
+                                            var volTask = Task.Run(() => d.VolumeLabel);
+                                            if (volTask.Wait(100)) vol = volTask.Result;
+                                            typeName = GetTypeName(d.Name, true, false);
+                                        }
+                                    } catch {}
+                                    string displayName = string.IsNullOrEmpty(vol) ? name : vol + " (" + name.TrimEnd('\\') + ")";
+                                    sb.AppendLine("DRIVE|" + displayName + "|" + d.Name + "|||" + typeName); 
                                 }
                             }
-                            else if (Directory.Exists(reqPath)) { foreach (FileSystemInfo fsi in new DirectoryInfo(reqPath).GetFileSystemInfos()) { try { if ((fsi.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden) continue; string typeName = GetTypeName(fsi.FullName, fsi is DirectoryInfo); if (fsi is DirectoryInfo) sb.AppendLine("D|" + fsi.Name + "||" + fsi.LastWriteTime.Ticks + "|" + typeName); else sb.AppendLine("F|" + fsi.Name + "|" + ((FileInfo)fsi).Length + "|" + fsi.LastWriteTime.Ticks + "|" + typeName); } catch {} } }
+                            else if (Directory.Exists(reqPath)) { 
+                                try {
+                                    foreach (FileSystemInfo fsi in new DirectoryInfo(reqPath).GetFileSystemInfos()) { 
+                                        try { 
+                                            if ((fsi.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden) continue; 
+                                            string typeName = GetTypeName(fsi.FullName, fsi is DirectoryInfo); 
+                                            if (fsi is DirectoryInfo) sb.AppendLine("D|" + fsi.Name + "||" + fsi.LastWriteTime.Ticks + "|" + typeName); 
+                                            else sb.AppendLine("F|" + fsi.Name + "|" + ((FileInfo)fsi).Length + "|" + fsi.LastWriteTime.Ticks + "|" + typeName); 
+                                        } catch {} 
+                                    } 
+                                } catch {}
+                            }
                             byte[] resBytes = Encoding.UTF8.GetBytes(sb.ToString()); byte[] resLen = BitConverter.GetBytes(resBytes.Length); await ns.WriteAsync(resLen, 0, 4); await ns.WriteAsync(resBytes, 0, resBytes.Length);
                         }
                         else if (cmd == "TASK_START") { 
