@@ -1105,7 +1105,7 @@ namespace FileTransferApp
         {
             if (task.TreePanel != null) { task.Card.Controls.Remove(task.TreePanel); task.TreePanel.Dispose(); task.TreePanel = null; }
             Panel pnl = new Panel { Location = new Point(10, 75), Size = new Size(task.Card.ClientSize.Width - 20, 160), BorderStyle = BorderStyle.None, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
-            TreeView tv = new TreeView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Segoe UI", 9), ImageList = imageList, ShowLines = true, ShowPlusMinus = true };
+            TransparentTreeView tv = new TransparentTreeView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Segoe UI", 9), ImageList = imageList, ShowLines = true, ShowPlusMinus = true };
             
             // Standard WinForms fix for mouse wheel: focus on hover
             tv.MouseEnter += (s, e) => { tv.Focus(); };
@@ -1116,7 +1116,8 @@ namespace FileTransferApp
                 tv.Nodes.Add("Hyper-scale transfer detected. Detailed file list hidden to maintain performance.");
                 tv.Nodes.Add("Total Items: " + task.TotalItems);
                 tv.EndUpdate();
-                task.Card.Height = 75 + 160 + 15;
+                task.Card.Height = 75 + 60 + 15;
+                pnl.Height = 60;
                 return;
             }
 
@@ -1160,7 +1161,7 @@ namespace FileTransferApp
                     countNodes(tv.Nodes);
                     
                     int itemHeight = tv.ItemHeight;
-                    int requiredHeight = Math.Max(160, Math.Min(1200, count * itemHeight + 10));
+                    int requiredHeight = Math.Max(25, Math.Min(1200, count * itemHeight + 10));
                     pnl.Height = requiredHeight;
                     task.Card.Height = 75 + requiredHeight + 15;
                 };
@@ -1464,18 +1465,49 @@ namespace FileTransferApp
 
     public class TransparentTreeView : TreeView
     {
+        [DllImport("user32.dll")]
+        private static extern bool GetScrollInfo(IntPtr hWnd, int fnBar, ref SCROLLINFO lpsi);
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct SCROLLINFO {
+            public uint cbSize;
+            public uint fMask;
+            public int nMin;
+            public int nMax;
+            public uint nPage;
+            public int nPos;
+            public int nTrackPos;
+        }
+        private const int SIF_ALL = 0x17;
+        private const int SB_VERT = 1;
+
         protected override void WndProc(ref Message m)
         {
             if (m.Msg == 0x020A) // WM_MOUSEWHEEL
             {
-                Control parent = this.Parent;
-                while (parent != null && !(parent is FlowLayoutPanel)) {
-                    parent = parent.Parent;
+                int delta = (short)((m.WParam.ToInt64() >> 16) & 0xFFFF);
+                SCROLLINFO si = new SCROLLINFO();
+                si.cbSize = (uint)Marshal.SizeOf(si);
+                si.fMask = SIF_ALL;
+                bool hasScroll = GetScrollInfo(this.Handle, SB_VERT, ref si);
+                
+                bool atLimit = false;
+                if (!hasScroll || si.nMax <= (int)si.nPage) {
+                    atLimit = true;
+                } else {
+                    if (delta > 0 && si.nPos <= si.nMin) atLimit = true;
+                    else if (delta < 0 && si.nPos + (int)si.nPage >= si.nMax) atLimit = true;
                 }
-                if (parent != null) {
-                    SendMessage(parent.Handle, m.Msg, m.WParam, m.LParam);
-                    m.Result = IntPtr.Zero;
-                    return;
+
+                if (atLimit) {
+                    Control parent = this.Parent;
+                    while (parent != null && !(parent is FlowLayoutPanel)) {
+                        parent = parent.Parent;
+                    }
+                    if (parent != null) {
+                        SendMessage(parent.Handle, m.Msg, m.WParam, m.LParam);
+                        return;
+                    }
                 }
             }
             base.WndProc(ref m);
