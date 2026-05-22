@@ -878,47 +878,59 @@ namespace FileTransferApp
 
         private async Task ProcessOutgoingItems(string ip, int port, string[] paths, string baseDir, string remoteDestDir)
         {
-            TransferTask task = new TransferTask { TaskName = paths.Length == 1 ? Path.GetFileName(paths[0]) : paths.Length + " items", Direction = "OUT", RemoteIP = ip, RemotePort = port };
-            long totalFilesFound = 0;
-            long totalBytesFound = 0;
-
-            // Phase 1: Rapid Scan (No detailed objects yet to save RAM)
-            foreach (string path in paths) {
-                if (File.Exists(path)) { totalFilesFound++; totalBytesFound += new FileInfo(path).Length; }
-                else if (Directory.Exists(path)) {
-                    foreach (string file in Directory.GetFiles(path, "*", SearchOption.AllDirectories)) { totalFilesFound++; totalBytesFound += new FileInfo(file).Length; }
-                }
-            }
-
-            task.TotalBytes = totalBytesFound;
+            TransferTask task = new TransferTask { 
+                TaskName = paths.Length == 1 ? Path.GetFileName(paths[0]) : paths.Length + " items", 
+                Direction = "OUT", RemoteIP = ip, RemotePort = port 
+            };
             task.LocalBaseDir = baseDir; 
-            SafeInvoke(() => { CreateTaskCard(task); if (totalFilesFound > 10000) task.StatusLbl.Text = "Status: Scanning " + totalFilesFound + " files..."; });
+            SafeInvoke(() => { CreateTaskCard(task); task.StatusLbl.Text = "Status: Initializing Dynamic Stream..."; });
 
-            try { using (TcpClient client = new TcpClient()) { await client.ConnectAsync(ip, port); using (NetworkStream ns = client.GetStream()) { await SendCommandAsync(ns, "TASK_START|" + task.TaskName + "|" + task.TotalBytes + "|" + totalFilesFound + "|" + task.TaskId + "|" + actualTcpPort); } } } catch { task.CompleteTask("Failed to start"); return; }
-            
+            try { 
+                using (TcpClient client = new TcpClient()) { 
+                    await client.ConnectAsync(ip, port); 
+                    using (NetworkStream ns = client.GetStream()) { 
+                        await SendCommandAsync(ns, "TASK_START|" + task.TaskName + "|0|0|" + task.TaskId + "|" + actualTcpPort); 
+                    } 
+                } 
+            } catch { task.CompleteTask("Failed to start"); return; }
+
             Stopwatch sw = new Stopwatch(); sw.Start();
-            
-            // Phase 2: Streaming Transfer
+            long processedFiles = 0;
+
             foreach (string path in paths) {
                 if (task.IsCancelled) break;
                 if (File.Exists(path)) {
                     await StreamSingleFile(ip, port, path, Path.Combine(remoteDestDir, Path.GetFileName(path)), task, sw);
+                    processedFiles++;
                 } else if (Directory.Exists(path)) {
                     string rootDir = Path.GetDirectoryName(path);
                     if (!rootDir.EndsWith(Path.DirectorySeparatorChar.ToString())) rootDir += Path.DirectorySeparatorChar;
-                    foreach (string file in Directory.GetFiles(path, "*", SearchOption.AllDirectories)) {
+
+                    // Hyper-scale optimization: Enumerate instead of GetFiles to avoid memory explosion
+                    foreach (string file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories)) {
                         if (task.IsCancelled) break;
                         string relPath = file.Substring(rootDir.Length).Replace("\\", "/");
                         await StreamSingleFile(ip, port, file, Path.Combine(remoteDestDir, relPath), task, sw);
+                        processedFiles++;
+                        if (processedFiles % 2000 == 0) {
+                            SafeInvoke(() => { task.StatusLbl.Text = "Status: Processing " + processedFiles + " files..."; });
+                        }
                     }
                 }
             }
 
             if (!task.IsCancelled) { 
-                try { using (TcpClient client = new TcpClient()) { await client.ConnectAsync(ip, port); using (NetworkStream ns = client.GetStream()) { await SendCommandAsync(ns, "TASK_END|" + task.TaskId); } } } catch { } 
+                try { 
+                    using (TcpClient client = new TcpClient()) { 
+                        await client.ConnectAsync(ip, port); 
+                        using (NetworkStream ns = client.GetStream()) { 
+                            await SendCommandAsync(ns, "TASK_END|" + task.TaskId); 
+                        } 
+                    } 
+                } catch { } 
                 await Task.Delay(300);
             }
-            task.CompleteTask(task.IsCancelled ? "Cancelled" : "Completed");
+            task.CompleteTask(task.IsCancelled ? "Cancelled" : "Completed (" + processedFiles + " files)");
             SafeInvoke(() => { RefreshRemoteList(); });
         }
 
@@ -927,27 +939,33 @@ namespace FileTransferApp
             try {
                 long fsLen = new FileInfo(localPath).Length;
                 using (TcpClient client = new TcpClient()) {
-                    client.NoDelay = true; client.SendBufferSize = 1048576;
+                    client.NoDelay = true; 
+                    client.SendBufferSize = 8388608;
                     await client.ConnectAsync(ip, port);
                     using (NetworkStream ns = client.GetStream()) {
                         await SendCommandAsync(ns, "PUSH|" + remotePath + "|" + fsLen + "|" + task.TaskId);
                         if (fsLen > 0) {
-                            using (FileStream fs = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1048576)) { 
-                                byte[] buf = new byte[1048576]; int r;
-                                while ((r = await fs.ReadAsync(buf, 0, buf.Length)) > 0) {
+                            using (FileStream fs = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4194304, FileOptions.SequentialScan | FileOptions.Asynchronous)) { 
+                                byte[] buf1 = new byte[2097152]; byte[] buf2 = new byte[2097152]; 
+                                byte[] rB = buf1; byte[] wB = buf2; Task wT = Task.Delay(0);
+                                int r = await fs.ReadAsync(rB, 0, rB.Length);
+                                while (r > 0) {
                                     if (task.IsCancelled) break;
                                     while (task.IsPaused && !task.IsCancelled) await Task.Delay(200);
-                                    await ns.WriteAsync(buf, 0, r);
+                                    await wT;
+                                    byte[] tmp = rB; rB = wB; wB = tmp;
+                                    wT = ns.WriteAsync(wB, 0, r);
                                     System.Threading.Interlocked.Add(ref task.transferredBytesBacking, r);
                                     task.UpdateProgress(task.TransferredBytes, (task.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001));
+                                    r = await fs.ReadAsync(rB, 0, rB.Length);
                                 }
+                                await wT;
                             }
                         }
                     }
                 }
             } catch { }
         }
-
         private void CreateTaskCard(TransferTask task)
         {
             Panel card = new Panel { Height = 70, BackColor = Color.White, Margin = new Padding(0, 0, 0, 10), BorderStyle = BorderStyle.FixedSingle };
