@@ -1095,19 +1095,28 @@ namespace FileTransferApp
             TransparentTreeView tv = new TransparentTreeView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, Font = new Font("Segoe UI", 9), ImageList = imageList };
             tv.MouseEnter += (s, e) => tv.Focus();
             task.TreePanel = pnl; task.FileTree = tv; pnl.Controls.Add(tv); task.Card.Controls.Add(pnl);
-            foreach (var file in task.Files) {
-                string[] parts = file.RelativePath.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
-                TreeNodeCollection currentNodes = tv.Nodes; TreeNode lastNode = null;
-                for (int i = 0; i < parts.Length; i++) {
-                    string part = parts[i];
-                    bool isFolder = i < parts.Length - 1;
-                    TreeNode nextNode = null; foreach (TreeNode node in currentNodes) { if (node.Text.StartsWith(part)) { nextNode = node; break; } }
-                    if (nextNode == null) { nextNode = new TreeNode(part); nextNode.ImageIndex = nextNode.SelectedImageIndex = GetIconIndex(part, isFolder); currentNodes.Add(nextNode); }
-                    currentNodes = nextNode.Nodes; lastNode = nextNode;
-                }
-                file.NodeRef = lastNode;
+
+            if (task.Files.Count > 10000) {
+                tv.Nodes.Add("Large transfer detected. Detailed file list hidden to maintain performance.");
+                tv.Nodes.Add("Total Items: " + task.TotalItems);
+                return;
             }
-            tv.ExpandAll();
+
+            tv.BeginUpdate();
+            try {
+                foreach (var file in task.Files) {
+                    string[] parts = file.RelativePath.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
+                    TreeNodeCollection currentNodes = tv.Nodes; TreeNode lastNode = null;
+                    for (int i = 0; i < parts.Length; i++) {
+                        string part = parts[i];
+                        bool isFolder = i < parts.Length - 1;
+                        TreeNode nextNode = null; foreach (TreeNode node in currentNodes) { if (node.Text.StartsWith(part)) { nextNode = node; break; } }
+                        if (nextNode == null) { nextNode = new TreeNode(part); nextNode.ImageIndex = nextNode.SelectedImageIndex = GetIconIndex(part, isFolder); currentNodes.Add(nextNode); }
+                        currentNodes = nextNode.Nodes; lastNode = nextNode;
+                    }
+                    file.NodeRef = lastNode;
+                }
+            } finally { tv.EndUpdate(); }
         }
 
         private async void StartTcpServer()
