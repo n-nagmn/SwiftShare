@@ -1062,8 +1062,11 @@ namespace FileTransferApp
                     try {
                         if (task.Direction == "IN") {
                             foreach (var f in task.Files) {
-                                if (!string.IsNullOrEmpty(f.DestinationPath) && File.Exists(f.DestinationPath)) {
-                                    try { File.SetAttributes(f.DestinationPath, FileAttributes.Normal); File.Delete(f.DestinationPath); } catch {}
+                                if (!string.IsNullOrEmpty(f.DestinationPath)) {
+                                    try {
+                                        if (File.Exists(f.DestinationPath)) { File.SetAttributes(f.DestinationPath, FileAttributes.Normal); File.Delete(f.DestinationPath); }
+                                        else if (Directory.Exists(f.DestinationPath)) Directory.Delete(f.DestinationPath, true);
+                                    } catch {}
                                 }
                             }
                             await Task.Delay(500); 
@@ -1270,7 +1273,7 @@ namespace FileTransferApp
                                 if (!Directory.Exists(dirPath)) Directory.CreateDirectory(dirPath); 
                                 lock(activeInTasks) { if (activeInTasks.ContainsKey(tId)) { 
                                     var t = activeInTasks[tId]; t.ProcessedItems++; 
-                                    lock(t.Files) { t.Files.Add(new TransferItem { RelativePath = relDir, TotalSize = 0 }); }
+                                    lock(t.Files) { t.Files.Add(new TransferItem { RelativePath = relDir, TotalSize = 0, DestinationPath = dirPath }); }
                                     t.UpdateProgress(t.TransferredBytes, 0); 
                                 } }
                             } catch {}
@@ -1283,7 +1286,12 @@ namespace FileTransferApp
                                 if (targetCard != null && targetTask != null) {
                                     if (deleteFiles && targetTask.Direction == "IN") {
                                         foreach (var f in targetTask.Files) {
-                                            if (!string.IsNullOrEmpty(f.DestinationPath) && File.Exists(f.DestinationPath)) { try { File.SetAttributes(f.DestinationPath, FileAttributes.Normal); File.Delete(f.DestinationPath); } catch {} }
+                                            if (!string.IsNullOrEmpty(f.DestinationPath)) {
+                                                try {
+                                                    if (File.Exists(f.DestinationPath)) { File.SetAttributes(f.DestinationPath, FileAttributes.Normal); File.Delete(f.DestinationPath); }
+                                                    else if (Directory.Exists(f.DestinationPath)) Directory.Delete(f.DestinationPath, true);
+                                                } catch {}
+                                            }
                                         }
                                         await Task.Delay(500); RefreshLocalList(txtLocal.Text);
                                     }
