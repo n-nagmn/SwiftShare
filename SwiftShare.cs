@@ -1097,6 +1097,7 @@ namespace FileTransferApp
                             TransferTask t = null;
                             lock(activeInTasks) { if (activeInTasks.ContainsKey(tId)) { t = activeInTasks[tId]; activeInTasks.Remove(tId); } }
                             if (t != null) t.CompleteTask("Completed"); 
+                            SafeInvoke(() => { RefreshLocalList(txtLocal.Text); });
                         }
                         else if (cmd == "SYNC_REMOVE_TASK") {
                             string targetId = parts[1]; bool deleteFiles = parts.Length > 2 && parts[2] == "1";
