@@ -128,7 +128,7 @@ namespace FileTransferApp
                     if (key != null) {
                         if (key.GetValue("SplitMainDist") != null) splitMain.SplitterDistance = (int)key.GetValue("SplitMainDist");
                     } else {
-                        splitMain.SplitterDistance = 420;
+                        splitMain.SplitterDistance = 670;
                     }
                 }
             } catch { }
@@ -281,7 +281,7 @@ namespace FileTransferApp
             splitMain = new SplitContainer();
             splitMain.Orientation = Orientation.Horizontal;
             splitMain.Dock = DockStyle.Fill;
-            splitMain.SplitterDistance = 420;
+            splitMain.SplitterDistance = 670;
             dashboard.Controls.Add(splitMain);
 
             Panel explorerCard = CreateCard("FILE EXPLORER", 0, 0, splitMain.Panel1.Width, splitMain.Panel1.Height);
