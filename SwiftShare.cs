@@ -883,7 +883,7 @@ namespace FileTransferApp
                 Direction = "OUT", RemoteIP = ip, RemotePort = port 
             };
             task.LocalBaseDir = baseDir; 
-            SafeInvoke(() => { CreateTaskCard(task); task.StatusLbl.Text = "Status: Initializing Batch Stream..."; });
+            SafeInvoke(() => { CreateTaskCard(task); task.StatusLbl.Text = "Status: Initializing Dynamic Stream..."; });
 
             try { 
                 using (TcpClient client = new TcpClient()) {
@@ -894,25 +894,17 @@ namespace FileTransferApp
                         await SendCommandAsync(ns, "TASK_START|" + task.TaskName + "|0|0|" + task.TaskId + "|" + actualTcpPort); 
 
                         Stopwatch sw = new Stopwatch(); sw.Start();
-                        long processedFiles = 0;
+                        long processedItems = 0;
 
                         foreach (string path in paths) {
                             if (task.IsCancelled) break;
                             if (File.Exists(path)) {
                                 await StreamSingleFilePersistent(ns, path, Path.Combine(remoteDestDir, Path.GetFileName(path)), task, sw);
-                                processedFiles++;
+                                processedItems++;
                             } else if (Directory.Exists(path)) {
                                 string rootDir = Path.GetDirectoryName(path);
                                 if (!rootDir.EndsWith(Path.DirectorySeparatorChar.ToString())) rootDir += Path.DirectorySeparatorChar;
-                                foreach (string file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories)) {
-                                    if (task.IsCancelled) break;
-                                    string relPath = file.Substring(rootDir.Length).Replace("\\", "/");
-                                    await StreamSingleFilePersistent(ns, file, Path.Combine(remoteDestDir, relPath), task, sw);
-                                    processedFiles++;
-                                    if (processedFiles % 500 == 0) {
-                                        SafeInvoke(() => { task.StatusLbl.Text = "Status: Sending " + processedFiles + " files..."; });
-                                    }
-                                }
+                                processedItems += await SendFolderRecursive(ns, path, rootDir, remoteDestDir, task, sw);
                             }
                         }
 
@@ -928,6 +920,38 @@ namespace FileTransferApp
             SafeInvoke(() => { RefreshRemoteList(); });
         }
 
+        private async Task<long> SendFolderRecursive(NetworkStream ns, string currentDir, string rootDir, string remoteDestDir, TransferTask task, Stopwatch sw)
+        {
+            long count = 0;
+            if (task.IsCancelled) return 0;
+
+            try {
+                // Ensure directory exists on remote side
+                string relDir = currentDir.Substring(rootDir.Length).Replace("\\", "/");
+                string remoteDir = Path.Combine(remoteDestDir, relDir).Replace("\\", "/");
+                await SendCommandAsync(ns, "MKDIR|" + remoteDir + "|" + task.TaskId);
+                count++; // Count the folder itself to match "Properties" behavior if desired, but usually people compare file counts. 
+                         // Here we count every processed item (file/folder).
+
+                // Send files in this directory
+                foreach (string file in Directory.GetFiles(currentDir)) {
+                    if (task.IsCancelled) break;
+                    string relPath = file.Substring(rootDir.Length).Replace("\\", "/");
+                    await StreamSingleFilePersistent(ns, file, Path.Combine(remoteDestDir, relPath), task, sw);
+                    count++;
+                    if (count % 500 == 0) SafeInvoke(() => { task.StatusLbl.Text = "Status: Sending " + count + " items..."; });
+                }
+
+                // Recurse into subdirectories
+                foreach (string dir in Directory.GetDirectories(currentDir)) {
+                    if (task.IsCancelled) break;
+                    count += await SendFolderRecursive(ns, dir, rootDir, remoteDestDir, task, sw);
+                }
+            } catch (UnauthorizedAccessException) { /* Skip inaccessible folders */ }
+              catch (Exception) { /* Skip other errors like path too long */ }
+
+            return count;
+        }
         private async Task StreamSingleFilePersistent(NetworkStream ns, string localPath, string remotePath, TransferTask task, Stopwatch sw)
         {
             try {
@@ -1075,6 +1099,7 @@ namespace FileTransferApp
                         string cmdStr;
                         try { cmdStr = await ReadCommandAsync(ns); } catch { break; } // Connection closed
                         string[] parts = cmdStr.Split('|'); string cmd = parts[0];
+                        
                         if (cmd == "LIST") {
                             string reqPath = parts.Length > 1 ? parts[1] : ""; StringBuilder sb = new StringBuilder();
                             if (string.IsNullOrEmpty(reqPath)) { 
@@ -1098,6 +1123,10 @@ namespace FileTransferApp
                             lock(activeInTasks) { if (activeInTasks.ContainsKey(tId)) { t = activeInTasks[tId]; activeInTasks.Remove(tId); } }
                             if (t != null) t.CompleteTask("Completed"); 
                             SafeInvoke(() => { RefreshLocalList(txtLocal.Text); });
+                        }
+                        else if (cmd == "MKDIR") {
+                            string dirPath = parts[1];
+                            try { if (!Directory.Exists(dirPath)) Directory.CreateDirectory(dirPath); } catch {}
                         }
                         else if (cmd == "SYNC_REMOVE_TASK") {
                             string targetId = parts[1]; bool deleteFiles = parts.Length > 2 && parts[2] == "1";
@@ -1149,12 +1178,11 @@ namespace FileTransferApp
                                             r = await ns.ReadAsync(rB, 0, (int)Math.Min((long)rB.Length, fs - total));
                                         } 
                                         await wT;
-                                        }
-                                        }
-                                        } catch { if (taskContext != null) taskContext.CompleteTask("Write Error"); }
-                                        }
-                                        else if (cmd == "EXCHANGE_ALIASES") {
-
+                                    }
+                                }
+                            } catch { if (taskContext != null) taskContext.CompleteTask("Write Error"); }
+                        }
+                        else if (cmd == "EXCHANGE_ALIASES") {
                             string peerData = parts.Length > 1 ? parts[1] : "";
                             MergeAliasSyncString(peerData);
                             string myData = GetAliasSyncString();
