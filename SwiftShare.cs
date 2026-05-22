@@ -85,6 +85,7 @@ namespace FileTransferApp
         private Color bgColor = Color.FromArgb(245, 245, 245);
         private Color cardColor = Color.White;
         private Dictionary<string, string> typeCache = new Dictionary<string, string>();
+        private Font typeFont = new Font("Segoe UI", 9f);
 
         [STAThread]
         static void Main()
@@ -312,7 +313,7 @@ namespace FileTransferApp
             btnLocalRefresh = new Button() { Text = "↻", Location = new Point(splitExplorer.Panel1.Width - 40, 4), Size = new Size(35, 25), Anchor = AnchorStyles.Top | AnchorStyles.Right };
             btnLocalRefresh.Click += (s, e) => RefreshLocalList(txtLocal.Text);
             
-            lvLocal = new ListView() { Location = new Point(5, 35), Size = new Size(splitExplorer.Panel1.Width - 10, splitExplorer.Panel1.Height - 80), View = View.Details, FullRowSelect = true, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right };
+            lvLocal = new ListView() { Location = new Point(5, 35), Size = new Size(splitExplorer.Panel1.Width - 10, splitExplorer.Panel1.Height - 80), View = View.Details, FullRowSelect = true, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right, Font = new Font("Segoe UI", 9.5f) };
             lvLocal.Columns.Add("Name", 200);
             lvLocal.Columns.Add("Date Modified", 130);
             lvLocal.Columns.Add("Type", 80);
@@ -378,7 +379,7 @@ namespace FileTransferApp
             btnRemoteRefresh = new Button() { Text = "↻", Location = new Point(splitExplorer.Panel2.Width - 40, 4), Size = new Size(35, 25), Anchor = AnchorStyles.Top | AnchorStyles.Right };
             btnRemoteRefresh.Click += (s, e) => RefreshRemoteList();
 
-            lvRemote = new ListView() { Location = new Point(5, 35), Size = new Size(splitExplorer.Panel2.Width - 10, splitExplorer.Panel2.Height - 80), View = View.Details, FullRowSelect = true, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right };
+            lvRemote = new ListView() { Location = new Point(5, 35), Size = new Size(splitExplorer.Panel2.Width - 10, splitExplorer.Panel2.Height - 80), View = View.Details, FullRowSelect = true, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right, Font = new Font("Segoe UI", 9.5f) };
             lvRemote.Columns.Add("Name", 200);
             lvRemote.Columns.Add("Date Modified", 130);
             lvRemote.Columns.Add("Type", 80);
@@ -674,12 +675,12 @@ namespace FileTransferApp
             SafeInvoke(() => {
                 try {
                     txtLocal.Text = path; lvLocal.Items.Clear();
-                    if (string.IsNullOrEmpty(path)) { foreach (var drive in DriveInfo.GetDrives()) { ListViewItem item = new ListViewItem(drive.Name); item.SubItems.Add(""); item.SubItems.Add(GetTypeName(drive.Name, true, false)); item.SubItems.Add(""); item.Tag = "D"; item.ImageIndex = GetIconIndex(drive.Name, true, false); lvLocal.Items.Add(item); } }
+                    if (string.IsNullOrEmpty(path)) { foreach (var drive in DriveInfo.GetDrives()) { ListViewItem item = new ListViewItem(drive.Name); item.SubItems.Add(""); var tSi = item.SubItems.Add(GetTypeName(drive.Name, true, false)); tSi.Font = typeFont; item.SubItems.Add(""); item.Tag = "D"; item.ImageIndex = GetIconIndex(drive.Name, true, false); item.UseItemStyleForSubItems = false; lvLocal.Items.Add(item); } }
                     else {
                         if (!Directory.Exists(path)) return;
-                        DirectoryInfo di = new DirectoryInfo(path); ListViewItem up = new ListViewItem(".."); up.SubItems.Add(""); up.SubItems.Add("File folder"); up.SubItems.Add(""); up.Tag = "UP"; up.ImageIndex = GetIconIndex(path, true); lvLocal.Items.Add(up);
-                        foreach(var d in di.GetDirectories()) { try { if ((d.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden) continue; ListViewItem item = new ListViewItem(d.Name); item.SubItems.Add(d.LastWriteTime.ToString("yyyy/MM/dd HH:mm")); item.SubItems.Add(GetTypeName(d.FullName, true)); item.SubItems.Add(""); item.Tag = "D"; item.ImageIndex = GetIconIndex(d.FullName, true); lvLocal.Items.Add(item); } catch {} }
-                        foreach(var f in di.GetFiles()) { try { if ((f.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden) continue; ListViewItem item = new ListViewItem(f.Name); item.SubItems.Add(f.LastWriteTime.ToString("yyyy/MM/dd HH:mm")); item.SubItems.Add(GetTypeName(f.FullName, false)); item.SubItems.Add(FormatSize(f.Length)); item.Tag = "F"; item.ImageIndex = GetIconIndex(f.FullName, false); lvLocal.Items.Add(item); } catch {} }
+                        DirectoryInfo di = new DirectoryInfo(path); ListViewItem up = new ListViewItem(".."); up.SubItems.Add(""); var tSiUp = up.SubItems.Add("File folder"); tSiUp.Font = typeFont; up.SubItems.Add(""); up.Tag = "UP"; up.ImageIndex = GetIconIndex(path, true); up.UseItemStyleForSubItems = false; lvLocal.Items.Add(up);
+                        foreach(var d in di.GetDirectories()) { try { if ((d.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden) continue; ListViewItem item = new ListViewItem(d.Name); item.SubItems.Add(d.LastWriteTime.ToString("yyyy/MM/dd HH:mm")); var tSi = item.SubItems.Add(GetTypeName(d.FullName, true)); tSi.Font = typeFont; item.SubItems.Add(""); item.Tag = "D"; item.ImageIndex = GetIconIndex(d.FullName, true); item.UseItemStyleForSubItems = false; lvLocal.Items.Add(item); } catch {} }
+                        foreach(var f in di.GetFiles()) { try { if ((f.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden) continue; ListViewItem item = new ListViewItem(f.Name); item.SubItems.Add(f.LastWriteTime.ToString("yyyy/MM/dd HH:mm")); var tSi = item.SubItems.Add(GetTypeName(f.FullName, false)); tSi.Font = typeFont; item.SubItems.Add(FormatSize(f.Length)); item.Tag = "F"; item.ImageIndex = GetIconIndex(f.FullName, false); item.UseItemStyleForSubItems = false; lvLocal.Items.Add(item); } catch {} }
                     }
                 } catch (Exception ex) { MessageBox.Show("Cannot access local path: " + ex.Message); }
             });
@@ -699,12 +700,12 @@ namespace FileTransferApp
                         byte[] resBuf = new byte[resLen]; await ReadFullAsync(ns, resBuf, resLen); string resStr = Encoding.UTF8.GetString(resBuf);
                         SafeInvoke(() => {
                             lvRemote.Items.Clear(); txtRemote.Text = currentRemotePath;
-                            if (!string.IsNullOrEmpty(currentRemotePath)) { ListViewItem up = new ListViewItem(".."); up.SubItems.Add(""); up.SubItems.Add("Folder"); up.SubItems.Add(""); up.Tag = "UP"; up.ImageIndex = GetIconIndex(currentRemotePath, true); lvRemote.Items.Add(up); }
+                            if (!string.IsNullOrEmpty(currentRemotePath)) { ListViewItem up = new ListViewItem(".."); up.SubItems.Add(""); var tSiUp = up.SubItems.Add("File folder"); tSiUp.Font = typeFont; up.SubItems.Add(""); up.Tag = "UP"; up.ImageIndex = GetIconIndex(currentRemotePath, true); up.UseItemStyleForSubItems = false; lvRemote.Items.Add(up); }
                             string[] lines = resStr.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
                             foreach(string line in lines) {
                                 string[] parts = line.Split('|'); string type = parts[0]; string name = parts[1]; string size = parts.Length > 2 ? parts[2] : ""; string ticks = parts.Length > 3 ? parts[3] : ""; string typeName = parts.Length > 4 ? parts[4] : (type == "D" ? (string.IsNullOrEmpty(currentRemotePath) ? "Drive" : "File folder") : "File");
                                 string dateStr = ""; if (!string.IsNullOrEmpty(ticks)) { try { dateStr = new DateTime(long.Parse(ticks)).ToString("yyyy/MM/dd HH:mm"); } catch {} }
-                                ListViewItem item = new ListViewItem(name); item.SubItems.Add(dateStr); item.SubItems.Add(typeName); item.SubItems.Add(type == "D" ? "" : FormatSize(long.Parse(size))); item.Tag = type; item.ImageIndex = GetIconIndex(name, type == "D"); lvRemote.Items.Add(item);
+                                ListViewItem item = new ListViewItem(name); item.SubItems.Add(dateStr); var tSi = item.SubItems.Add(typeName); tSi.Font = typeFont; item.SubItems.Add(type == "D" ? "" : FormatSize(long.Parse(size))); item.Tag = type; item.ImageIndex = GetIconIndex(name, type == "D"); item.UseItemStyleForSubItems = false; lvRemote.Items.Add(item);
                             }
                         });
                     }
