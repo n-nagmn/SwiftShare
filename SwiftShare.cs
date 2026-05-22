@@ -175,8 +175,8 @@ namespace FileTransferApp
         private void InitializeComponent()
         {
             this.Text = "SwiftShare - Advanced Explorer";
-            this.Size = new Size(1200, 850);
-            this.MinimumSize = new Size(1000, 700);
+            this.Size = new Size(1560, 1020);
+            this.MinimumSize = new Size(1300, 840);
             this.StartPosition = FormStartPosition.CenterScreen;
             this.BackColor = bgColor;
             this.Font = new Font("Segoe UI", 10);
