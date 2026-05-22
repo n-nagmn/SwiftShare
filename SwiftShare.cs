@@ -1146,11 +1146,30 @@ namespace FileTransferApp
                 }
             } finally { 
                 tv.EndUpdate(); 
-                int nodeCount = tv.GetNodeCount(true);
-                int itemHeight = tv.ItemHeight;
-                int requiredHeight = Math.Max(160, Math.Min(1200, nodeCount * itemHeight + 20));
-                pnl.Height = requiredHeight;
-                task.Card.Height = 75 + requiredHeight + 15;
+                
+                // Dynamic resizing handler
+                MethodInvoker updateSize = () => {
+                    int count = 0;
+                    Action<TreeNodeCollection> countNodes = null;
+                    countNodes = (nodes) => {
+                        count += nodes.Count;
+                        foreach (TreeNode n in nodes) {
+                            if (n.IsExpanded) countNodes(n.Nodes);
+                        }
+                    };
+                    countNodes(tv.Nodes);
+                    
+                    int itemHeight = tv.ItemHeight;
+                    int requiredHeight = Math.Max(160, Math.Min(1200, count * itemHeight + 10));
+                    if (pnl.Height != requiredHeight) {
+                        pnl.Height = requiredHeight;
+                        task.Card.Height = 75 + requiredHeight + 15;
+                    }
+                };
+
+                tv.AfterExpand += (s, e) => updateSize();
+                tv.AfterCollapse += (s, e) => updateSize();
+                updateSize(); // Initial size based on collapsed state
             }
         }
 
