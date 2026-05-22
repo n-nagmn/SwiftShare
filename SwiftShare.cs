@@ -1123,9 +1123,15 @@ namespace FileTransferApp
                             string part = parts[i];
                             bool isFolder = i < parts.Length - 1;
                             TreeNode nextNode = null; foreach (TreeNode node in currentNodes) { if (node.Text == part) { nextNode = node; break; } }
-                            if (nextNode == null) { nextNode = new TreeNode(part); nextNode.ImageIndex = nextNode.SelectedImageIndex = GetIconIndex(part, isFolder); currentNodes.Add(nextNode); }
+                            if (nextNode == null) { 
+                                nextNode = new TreeNode(part); 
+                                int iconIdx = GetIconIndex(part, isFolder);
+                                nextNode.ImageIndex = nextNode.SelectedImageIndex = iconIdx; 
+                                currentNodes.Add(nextNode); 
+                            }
                             currentNodes = nextNode.Nodes; lastNode = nextNode;
                         }
+
                         file.NodeRef = lastNode;
                     }
                 }
