@@ -12,6 +12,7 @@ using System.Windows.Forms;
 using System.Diagnostics;
 using Microsoft.Win32;
 using System.Runtime.InteropServices;
+using System.Runtime;
 
 namespace FileTransferApp
 {
@@ -112,7 +113,13 @@ namespace FileTransferApp
         [STAThread]
         static void Main()
         {
+            try {
+                Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.High;
+                GCSettings.LatencyMode = GCLatencyMode.SustainedLowLatency;
+            } catch {}
+            
             Application.EnableVisualStyles();
+
             Application.SetCompatibleTextRenderingDefault(false);
             Application.ThreadException += (s, e) => {
                 MessageBox.Show("Error:\n" + e.Exception.Message, "SwiftShare Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
