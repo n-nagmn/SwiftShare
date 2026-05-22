@@ -1009,7 +1009,14 @@ namespace FileTransferApp
                         {
                         try {
                         long fsLen = new FileInfo(localPath).Length;
-                        await SendCommandAsync(ns, "PUSH|" + remotePath + "|" + fsLen + "|" + task.TaskId + "|" + relPathForTree);
+                        string hash = "";
+                        if (fsLen > 0) {
+                            using (var md5 = System.Security.Cryptography.MD5.Create())
+                            using (var fs = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)) {
+                                hash = BitConverter.ToString(md5.ComputeHash(fs)).Replace("-", "").ToLower();
+                            }
+                        }
+                        await SendCommandAsync(ns, "PUSH|" + remotePath + "|" + fsLen + "|" + task.TaskId + "|" + relPathForTree + "|" + hash);
                         if (fsLen > 0) {
                         using (FileStream fs = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4194304, FileOptions.SequentialScan | FileOptions.Asynchronous)) { 
                         byte[] buf1 = new byte[2097152]; byte[] buf2 = new byte[2097152]; 
@@ -1310,13 +1317,14 @@ namespace FileTransferApp
                         else if (cmd == "PUSH") {
                             string destPath = parts[1]; long fs = long.Parse(parts[2]); string tId = parts.Length > 3 ? parts[3] : "";
                             string treeRelPath = parts.Length > 4 ? parts[4] : Path.GetFileName(destPath);
+                            string expectedHash = parts.Length > 5 ? parts[5] : "";
                             lock(activeInTasks) { if (activeInTasks.ContainsKey(tId)) taskContext = activeInTasks[tId]; }
                             TransferItem item = new TransferItem { RelativePath = treeRelPath, TotalSize = fs, LocalPath = "", DestinationPath = destPath }; 
                             if (taskContext != null) { lock(taskContext.Files) { taskContext.Files.Add(item); } }
                             string saveDir = Path.GetDirectoryName(destPath); if (!Directory.Exists(saveDir)) Directory.CreateDirectory(saveDir);
                             if (!sw.IsRunning) sw.Start();
                             try {
-                                if (fs == 0) { using (File.Create(destPath)) {} }
+                                if (fs == 0) { using (File.Create(destPath)) {} item.VerificationResult = "Verified"; }
                                 else {
                                     using (FileStream fstream = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None, 4194304, FileOptions.SequentialScan | FileOptions.Asynchronous)) { 
                                         if (fs > 0) fstream.SetLength(fs);
@@ -1339,6 +1347,14 @@ namespace FileTransferApp
                                             r = await ns.ReadAsync(rB, 0, (int)Math.Min((long)rB.Length, fs - total));
                                         } 
                                         await wT;
+                                    }
+                                    // Verify
+                                    if (!string.IsNullOrEmpty(expectedHash)) {
+                                        using (var md5 = System.Security.Cryptography.MD5.Create())
+                                        using (var stream = new FileStream(destPath, FileMode.Open, FileAccess.Read, FileShare.Read)) {
+                                            string actualHash = BitConverter.ToString(md5.ComputeHash(stream)).Replace("-", "").ToLower();
+                                            item.VerificationResult = (actualHash == expectedHash) ? "Verified" : "Verification Failed";
+                                        }
                                     }
                                 }
                                 lock(activeInTasks) { if (activeInTasks.ContainsKey(tId)) { var t = activeInTasks[tId]; t.ProcessedItems++; t.UpdateProgress(t.TransferredBytes, 0); } }
@@ -1620,12 +1636,21 @@ namespace FileTransferApp
                 })); 
             } 
         }
-        private void UpdateTreeNodes() { if (FileTree == null) return; lock(Files) { foreach (var item in Files) { if (item.NodeRef != null) { int p = (int)((item.TransferredBytes * 100) / (item.TotalSize > 0 ? item.TotalSize : 1)); string newText = Path.GetFileName(item.RelativePath) + " [" + p + "%]"; if (item.NodeRef.Text != newText) item.NodeRef.Text = newText; UpdateParentNode(item.NodeRef.Parent); } } } }
+        private void UpdateTreeNodes() { if (FileTree == null) return; lock(Files) { foreach (var item in Files) { if (item.NodeRef != null) { int p = (int)((item.TransferredBytes * 100) / (item.TotalSize > 0 ? item.TotalSize : 1)); string verifyStatus = ""; if (!string.IsNullOrEmpty(item.VerificationResult)) verifyStatus = " [" + item.VerificationResult + "]"; string newText = Path.GetFileName(item.RelativePath) + " [" + p + "%]" + verifyStatus; if (item.NodeRef.Text != newText) item.NodeRef.Text = newText; UpdateParentNode(item.NodeRef.Parent); } } } }
         private void UpdateParentNode(TreeNode parent) { if (parent == null) return; double totalP = 0; foreach (TreeNode child in parent.Nodes) { string txt = child.Text; int start = txt.LastIndexOf('['); int end = txt.LastIndexOf('%'); if (start >= 0 && end > start) { double p; if (double.TryParse(txt.Substring(start + 1, end - start - 1), out p)) totalP += p; } } int avgP = (int)(totalP / (parent.Nodes.Count > 0 ? parent.Nodes.Count : 1)); string cleanName = parent.Text.Split('[')[0].Trim(); parent.Text = cleanName + " [" + avgP + "%]"; UpdateParentNode(parent.Parent); }
         public void CompleteTask(string status) { 
             IsCompleted = true;
             if (Card != null && !Card.IsDisposed) { Card.BeginInvoke(new MethodInvoker(delegate { if (StatusLbl != null) StatusLbl.Text = "Status: " + status + " (" + ProcessedItems + " items)"; if (PauseBtn != null) PauseBtn.Visible = false; if (CancelBtn != null) CancelBtn.Visible = false; if (OpenBtn != null) OpenBtn.Visible = (status == "Completed"); if (DeleteBtn != null) DeleteBtn.Visible = (status == "Completed"); if (RemoveBtn != null) RemoveBtn.Visible = true; if (Progress != null) { Progress.Value = 100; Progress.Update(); } if (SpeedLbl != null) SpeedLbl.Text = "---"; if (TotalItems < 50000) UpdateTreeNodes(); })); } 
         }
     }
-    public class TransferItem { public string LocalPath { get; set; } public string RelativePath { get; set; } public string DestinationPath { get; set; } public long TotalSize { get; set; } public long TransferredBytes { get { return System.Threading.Interlocked.Read(ref transferredBytesBacking); } } public long transferredBytesBacking; public TreeNode NodeRef { get; set; } }
+    public class TransferItem { 
+        public string LocalPath { get; set; } 
+        public string RelativePath { get; set; } 
+        public string DestinationPath { get; set; } 
+        public long TotalSize { get; set; } 
+        public long TransferredBytes { get { return System.Threading.Interlocked.Read(ref transferredBytesBacking); } } 
+        public long transferredBytesBacking; 
+        public TreeNode NodeRef { get; set; } 
+        public string VerificationResult { get; set; }
+    }
 }
