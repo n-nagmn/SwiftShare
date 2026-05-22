@@ -131,7 +131,6 @@ namespace FileTransferApp
                     e.Cancel = true;
                     this.Hide();
                     this.WindowState = FormWindowState.Minimized;
-                    trayIcon.ShowBalloonTip(2000, "SwiftShare", "Running in background", ToolTipIcon.Info);
                 } else {
                     SaveLayoutSettings();
                 }
@@ -140,6 +139,7 @@ namespace FileTransferApp
 
         private void SetupTrayIcon()
         {
+            this.Icon = CreateStylishIcon();
             trayMenu = new ContextMenu();
             trayMenu.MenuItems.Add("Open", (s, e) => { this.Show(); this.WindowState = FormWindowState.Normal; this.BringToFront(); });
             trayMenu.MenuItems.Add("-");
@@ -151,6 +151,25 @@ namespace FileTransferApp
             trayIcon.ContextMenu = trayMenu;
             trayIcon.Visible = true;
             trayIcon.DoubleClick += (s, e) => { this.Show(); this.WindowState = FormWindowState.Normal; this.BringToFront(); };
+        }
+
+        private Icon CreateStylishIcon()
+        {
+            using (Bitmap bmp = new Bitmap(32, 32))
+            using (Graphics g = Graphics.FromImage(bmp)) {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                // Background Circle with Gradient
+                using (System.Drawing.Drawing2D.LinearGradientBrush brush = new System.Drawing.Drawing2D.LinearGradientBrush(new Point(0, 0), new Point(32, 32), Color.FromArgb(63, 81, 181), Color.FromArgb(48, 63, 159))) {
+                    g.FillEllipse(brush, 2, 2, 28, 28);
+                }
+                // Stylish S/Arrow Motif
+                Point[] pts = { new Point(8, 16), new Point(16, 8), new Point(24, 16), new Point(16, 16), new Point(16, 24) };
+                using (Pen p = new Pen(Color.White, 3)) {
+                    p.LineJoin = System.Drawing.Drawing2D.LineJoin.Round;
+                    g.DrawLines(p, pts);
+                }
+                return Icon.FromHandle(bmp.GetHicon());
+            }
         }
 
         private void LoadLayoutSettings()
