@@ -7,7 +7,7 @@ UninstallDisplayIcon={app}\SwiftShare.exe
 Compression=lzma2
 SolidCompression=yes
 OutputDir=.
-OutputBaseFilename=SwiftShareSetup
+OutputBaseFilename=SwiftShareSetup_Fixed
 ; The following line fixes the "mysterious blue curtain on the left" by using the modern installer style
 WizardStyle=modern
 ; The following line fixes the "different icon from main app" by applying the app's icon to the installer
