@@ -521,6 +521,7 @@ namespace FileTransferApp
                     c.Width = historyFlow.ClientSize.Width - 25; // Leave room for scrollbar
                 }
             };
+            historyFlow.MouseEnter += (s, e) => historyFlow.Focus();
             historyCard.Controls.Add(historyFlow);
 
             SetupDragDrop(lvLocal, lvRemote);
@@ -852,6 +853,7 @@ namespace FileTransferApp
         private void CreateTaskCard(TransferTask task)
         {
             Panel card = new Panel { Height = 70, BackColor = Color.White, Margin = new Padding(0, 0, 0, 10), BorderStyle = BorderStyle.FixedSingle };
+            card.MouseEnter += (s, e) => historyFlow.Focus();
             task.Card = card;
             Label nameLbl = new Label { Text = (task.Direction == "OUT" ? "↗ " : "↘ ") + task.TaskName, Font = new Font("Segoe UI Semibold", 10), Location = new Point(10, 10), Size = new Size(300, 20) };
             card.Controls.Add(nameLbl);
