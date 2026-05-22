@@ -1043,8 +1043,8 @@ namespace FileTransferApp
             card.MouseEnter += (s, e) => historyFlow.Focus();
             task.Card = card;
             card.Tag = task;
-            Label nameLbl = new Label { Text = (task.Direction == "OUT" ? "↗ " : "↘ ") + task.TaskName, Font = new Font("Segoe UI Semibold", 10), Location = new Point(10, 10), Size = new Size(300, 20) };
-            card.Controls.Add(nameLbl);
+            Label nameLbl = new Label { Text = (task.Direction == "OUT" ? "↗ " : "↘ ") + task.TaskName, Font = new Font("Segoe UI Semibold", 10), Location = new Point(10, 10), AutoSize = true };
+            task.NameLbl = nameLbl; card.Controls.Add(nameLbl);
             ProgressBar pb = new ProgressBar { Location = new Point(10, 35), Height = 10 };
             task.Progress = pb; card.Controls.Add(pb);
             Label statusLbl = new Label { Text = "Status: Waiting", Font = new Font("Segoe UI", 8), ForeColor = Color.Gray, Location = new Point(10, 50), Size = new Size(200, 15) };
@@ -1609,7 +1609,7 @@ namespace FileTransferApp
         public Stopwatch TransferSw { get; set; }
         public bool IsPaused { get; set; } public bool IsCancelled { get; set; } public bool IsCompleted { get; set; }
         public List<TransferItem> Files { get; set; } public string LocalBaseDir { get; set; } public string RemoteIP { get; set; } public int RemotePort { get; set; }
-        public Panel Card { get; set; } public ProgressBar Progress { get; set; } public Label StatusLbl { get; set; } public Label SpeedLbl { get; set; } public Button PauseBtn { get; set; } public Button CancelBtn { get; set; } public Button OpenBtn { get; set; } public Button DeleteBtn { get; set; } public Button RemoveBtn { get; set; } public TreeView FileTree { get; set; } public Panel TreePanel { get; set; }
+        public Panel Card { get; set; } public Label NameLbl { get; set; } public ProgressBar Progress { get; set; } public Label StatusLbl { get; set; } public Label SpeedLbl { get; set; } public Button PauseBtn { get; set; } public Button CancelBtn { get; set; } public Button OpenBtn { get; set; } public Button DeleteBtn { get; set; } public Button RemoveBtn { get; set; } public TreeView FileTree { get; set; } public Panel TreePanel { get; set; }
         private long lastUiUpdateTicks = 0;
         public TransferTask() { Files = new List<TransferItem>(); TaskId = Guid.NewGuid().ToString(); TransferSw = new Stopwatch(); }
         public void UpdateProgress(long totalCurrent, double speedMBs) { 
@@ -1640,7 +1640,28 @@ namespace FileTransferApp
         private void UpdateParentNode(TreeNode parent) { if (parent == null) return; double totalP = 0; foreach (TreeNode child in parent.Nodes) { string txt = child.Text; int start = txt.LastIndexOf('['); int end = txt.LastIndexOf('%'); if (start >= 0 && end > start) { double p; if (double.TryParse(txt.Substring(start + 1, end - start - 1), out p)) totalP += p; } } int avgP = (int)(totalP / (parent.Nodes.Count > 0 ? parent.Nodes.Count : 1)); string cleanName = parent.Text.Split('[')[0].Trim(); parent.Text = cleanName + " [" + avgP + "%]"; UpdateParentNode(parent.Parent); }
         public void CompleteTask(string status) { 
             IsCompleted = true;
-            if (Card != null && !Card.IsDisposed) { Card.BeginInvoke(new MethodInvoker(delegate { if (StatusLbl != null) StatusLbl.Text = "Status: " + status + " (" + ProcessedItems + " items)"; if (PauseBtn != null) PauseBtn.Visible = false; if (CancelBtn != null) CancelBtn.Visible = false; if (OpenBtn != null) OpenBtn.Visible = (status == "Completed"); if (DeleteBtn != null) DeleteBtn.Visible = (status == "Completed"); if (RemoveBtn != null) RemoveBtn.Visible = true; if (Progress != null) { Progress.Value = 100; Progress.Update(); } if (SpeedLbl != null) SpeedLbl.Text = "---"; if (TotalItems < 50000) UpdateTreeNodes(); })); } 
+            if (Card != null && !Card.IsDisposed) { Card.BeginInvoke(new MethodInvoker(delegate { 
+                if (status == "Completed") {
+                    bool allVerified = true; bool anyFailed = false;
+                    lock(Files) {
+                        foreach(var f in Files) {
+                            if (f.VerificationResult == "Verification Failed") anyFailed = true;
+                            if (f.VerificationResult != "Verified") allVerified = false;
+                        }
+                    }
+                    if (NameLbl != null) {
+                        if (anyFailed) { NameLbl.Text += " [Verification Failed]"; NameLbl.ForeColor = Color.Red; }
+                        else if (allVerified) { NameLbl.Text += " [Verified]"; NameLbl.ForeColor = Color.Green; }
+                    }
+                }
+                if (StatusLbl != null) StatusLbl.Text = "Status: " + status + " (" + ProcessedItems + " items)"; 
+                if (PauseBtn != null) PauseBtn.Visible = false; if (CancelBtn != null) CancelBtn.Visible = false; 
+                if (OpenBtn != null) OpenBtn.Visible = (status == "Completed"); if (DeleteBtn != null) DeleteBtn.Visible = (status == "Completed"); 
+                if (RemoveBtn != null) RemoveBtn.Visible = true; 
+                if (Progress != null) { Progress.Value = 100; Progress.Update(); } 
+                if (SpeedLbl != null) SpeedLbl.Text = "---"; 
+                if (TotalItems < 50000) UpdateTreeNodes(); 
+            })); } 
         }
     }
     public class TransferItem { 
