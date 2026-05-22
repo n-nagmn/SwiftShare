@@ -1122,30 +1122,34 @@ namespace FileTransferApp
                         string saveDir = Path.GetDirectoryName(relPath); if (!Directory.Exists(saveDir)) Directory.CreateDirectory(saveDir);
                         sw.Start();
                         
-                        // Extreme 400GbE Optimization: Memory Mapped I/O for Receiver
-                        using (MemoryMappedFile mmf = MemoryMappedFile.CreateFromFile(relPath, FileMode.OpenOrCreate, null, fs, MemoryMappedFileAccess.ReadWrite))
-                        using (MemoryMappedViewAccessor accessor = mmf.CreateViewAccessor(offset, segmentLen)) {
-                            byte[] buf = new byte[8388608]; // 8MB buffer for full filling
-                            long receivedInSegment = 0;
-                            while (receivedInSegment < segmentLen) {
-                                if (taskContext != null) { if (taskContext.IsCancelled) break; while (taskContext.IsPaused && !taskContext.IsCancelled) await Task.Delay(100); }
-                                
-                                int toRead = (int)Math.Min((long)buf.Length, segmentLen - receivedInSegment);
-                                int bytesReadThisLoop = 0;
-                                while(bytesReadThisLoop < toRead) {
-                                    int r = await ns.ReadAsync(buf, bytesReadThisLoop, toRead - bytesReadThisLoop);
-                                    if (r == 0) break;
-                                    bytesReadThisLoop += r;
-                                }
-                                if (bytesReadThisLoop == 0) break;
-                                
-                                accessor.WriteArray(receivedInSegment, buf, 0, bytesReadThisLoop);
-                                receivedInSegment += bytesReadThisLoop;
-                                if (taskContext != null) {
-                                    System.Threading.Interlocked.Add(ref taskContext.transferredBytesBacking, bytesReadThisLoop);
-                                    if (item != null) System.Threading.Interlocked.Add(ref item.transferredBytesBacking, bytesReadThisLoop);
-                                    double speed = (taskContext.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001);
-                                    taskContext.UpdateProgress(taskContext.TransferredBytes, speed);
+                        if (fs == 0) {
+                            using (File.Create(relPath)) {}
+                        } else {
+                            // Extreme 400GbE Optimization: Memory Mapped I/O for Receiver
+                            using (MemoryMappedFile mmf = MemoryMappedFile.CreateFromFile(relPath, FileMode.OpenOrCreate, null, fs, MemoryMappedFileAccess.ReadWrite))
+                            using (MemoryMappedViewAccessor accessor = mmf.CreateViewAccessor(offset, segmentLen)) {
+                                byte[] buf = new byte[8388608]; // 8MB buffer for full filling
+                                long receivedInSegment = 0;
+                                while (receivedInSegment < segmentLen) {
+                                    if (taskContext != null) { if (taskContext.IsCancelled) break; while (taskContext.IsPaused && !taskContext.IsCancelled) await Task.Delay(100); }
+                                    
+                                    int toRead = (int)Math.Min((long)buf.Length, segmentLen - receivedInSegment);
+                                    int bytesReadThisLoop = 0;
+                                    while(bytesReadThisLoop < toRead) {
+                                        int r = await ns.ReadAsync(buf, bytesReadThisLoop, toRead - bytesReadThisLoop);
+                                        if (r == 0) break;
+                                        bytesReadThisLoop += r;
+                                    }
+                                    if (bytesReadThisLoop == 0) break;
+                                    
+                                    accessor.WriteArray(receivedInSegment, buf, 0, bytesReadThisLoop);
+                                    receivedInSegment += bytesReadThisLoop;
+                                    if (taskContext != null) {
+                                        System.Threading.Interlocked.Add(ref taskContext.transferredBytesBacking, bytesReadThisLoop);
+                                        if (item != null) System.Threading.Interlocked.Add(ref item.transferredBytesBacking, bytesReadThisLoop);
+                                        double speed = (taskContext.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001);
+                                        taskContext.UpdateProgress(taskContext.TransferredBytes, speed);
+                                    }
                                 }
                             }
                         }
