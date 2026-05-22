@@ -916,6 +916,7 @@ namespace FileTransferApp
         {
             Panel pnl = new Panel { Location = new Point(10, 75), Size = new Size(task.Card.ClientSize.Width - 20, 160), BorderStyle = BorderStyle.None, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right };
             TreeView tv = new TreeView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, Font = new Font("Segoe UI", 9), ImageList = imageList };
+            tv.MouseEnter += (s, e) => tv.Focus();
             task.TreePanel = pnl; task.FileTree = tv; pnl.Controls.Add(tv); task.Card.Controls.Add(pnl);
             foreach (var file in task.Files) {
                 string[] parts = file.RelativePath.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
