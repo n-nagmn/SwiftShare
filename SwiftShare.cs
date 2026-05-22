@@ -876,7 +876,29 @@ namespace FileTransferApp
             task.OpenBtn = openBtn; card.Controls.Add(openBtn);
             deleteBtn.Click += async (s, e) => {
                 if (MessageBox.Show("Delete transferred files from disk?", "Confirm", MessageBoxButtons.YesNo) == DialogResult.Yes) {
-                    try { if (task.Direction == "IN") { foreach (var f in task.Files) { if (!string.IsNullOrEmpty(f.DestinationPath) && File.Exists(f.DestinationPath)) { try { File.SetAttributes(f.DestinationPath, FileAttributes.Normal); File.Delete(f.DestinationPath); } catch {} } } SafeInvoke(() => RefreshLocalList(txtLocal.Text)); } else { using (TcpClient client = new TcpClient()) { await client.ConnectAsync(task.RemoteIP, task.RemotePort); using (NetworkStream ns = client.GetStream()) { StringBuilder sb = new StringBuilder(); foreach(var f in task.Files) sb.Append(f.DestinationPath).Append(";"); await SendCommandAsync(ns, "TASK_REMOTE_DELETE|" + sb.ToString()); } } await Task.Delay(500); SafeInvoke(() => RefreshRemoteList()); } historyFlow.Controls.Remove(card); card.Dispose(); } catch (Exception ex) { MessageBox.Show("Error: " + ex.Message); }
+                    try {
+                        if (task.Direction == "IN") {
+                            foreach (var f in task.Files) {
+                                if (!string.IsNullOrEmpty(f.DestinationPath) && File.Exists(f.DestinationPath)) {
+                                    try { File.SetAttributes(f.DestinationPath, FileAttributes.Normal); File.Delete(f.DestinationPath); } catch {}
+                                }
+                            }
+                            await Task.Delay(500); 
+                            SafeInvoke(() => RefreshLocalList(txtLocal.Text)); 
+                        } else { 
+                            using (TcpClient client = new TcpClient()) { 
+                                await client.ConnectAsync(task.RemoteIP, task.RemotePort); 
+                                using (NetworkStream ns = client.GetStream()) { 
+                                    StringBuilder sb = new StringBuilder(); 
+                                    foreach(var f in task.Files) sb.Append(f.DestinationPath).Append(";"); 
+                                    await SendCommandAsync(ns, "TASK_REMOTE_DELETE|" + sb.ToString()); 
+                                } 
+                            } 
+                            await Task.Delay(800); 
+                            SafeInvoke(() => RefreshRemoteList()); 
+                        } 
+                        historyFlow.Controls.Remove(card); card.Dispose(); 
+                    } catch (Exception ex) { MessageBox.Show("Error: " + ex.Message); }
                 }
             };
             task.DeleteBtn = deleteBtn; card.Controls.Add(deleteBtn);
