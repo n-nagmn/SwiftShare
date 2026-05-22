@@ -914,8 +914,18 @@ namespace FileTransferApp
                     }
                 } catch { task.CompleteTask("Transfer Error"); return; }
             }
+            if (!task.IsCancelled) { 
+                try { 
+                    using (TcpClient client = new TcpClient()) { 
+                        await client.ConnectAsync(ip, port); 
+                        using (NetworkStream ns = client.GetStream()) { 
+                            await SendCommandAsync(ns, "TASK_END|" + task.TaskId); 
+                        } 
+                    } 
+                } catch { } 
+                await Task.Delay(300); // Allow receiver UI to finish updates
+            }
             task.CompleteTask(task.IsCancelled ? "Cancelled" : "Completed");
-            if (!task.IsCancelled) { try { using (TcpClient client = new TcpClient()) { await client.ConnectAsync(ip, port); using (NetworkStream ns = client.GetStream()) { await SendCommandAsync(ns, "TASK_END|" + task.TaskId); } } } catch { } }
             SafeInvoke(() => { RefreshRemoteList(); });
         }
 
@@ -1313,11 +1323,13 @@ namespace FileTransferApp
         public string TaskName { get; set; } public string Direction { get; set; } public long TotalBytes { get; set; } 
         public long TransferredBytes { get { return System.Threading.Interlocked.Read(ref transferredBytesBacking); } }
         public long transferredBytesBacking; 
-        public bool IsPaused { get; set; } public bool IsCancelled { get; set; } public List<TransferItem> Files { get; set; } public string LocalBaseDir { get; set; } public string RemoteIP { get; set; } public int RemotePort { get; set; }
+        public bool IsPaused { get; set; } public bool IsCancelled { get; set; } public bool IsCompleted { get; set; }
+        public List<TransferItem> Files { get; set; } public string LocalBaseDir { get; set; } public string RemoteIP { get; set; } public int RemotePort { get; set; }
         public Panel Card { get; set; } public ProgressBar Progress { get; set; } public Label StatusLbl { get; set; } public Label SpeedLbl { get; set; } public Button PauseBtn { get; set; } public Button CancelBtn { get; set; } public Button OpenBtn { get; set; } public Button DeleteBtn { get; set; } public Button RemoveBtn { get; set; } public TreeView FileTree { get; set; } public Panel TreePanel { get; set; }
         private long lastUiUpdateTicks = 0;
         public TransferTask() { Files = new List<TransferItem>(); TaskId = Guid.NewGuid().ToString(); }
         public void UpdateProgress(long totalCurrent, double speedMBs) { 
+            if (IsCompleted) return;
             long currentTicks = DateTime.UtcNow.Ticks;
             if (currentTicks - lastUiUpdateTicks < 1000000 && totalCurrent < TotalBytes) return; // Throttle to 10Hz
             lastUiUpdateTicks = currentTicks;
@@ -1325,7 +1337,10 @@ namespace FileTransferApp
         }
         private void UpdateTreeNodes() { if (FileTree == null) return; lock(Files) { foreach (var item in Files) { if (item.NodeRef != null) { int p = (int)((item.TransferredBytes * 100) / (item.TotalSize > 0 ? item.TotalSize : 1)); string newText = Path.GetFileName(item.RelativePath) + " [" + p + "%]"; if (item.NodeRef.Text != newText) item.NodeRef.Text = newText; UpdateParentNode(item.NodeRef.Parent); } } } }
         private void UpdateParentNode(TreeNode parent) { if (parent == null) return; double totalP = 0; foreach (TreeNode child in parent.Nodes) { string txt = child.Text; int start = txt.LastIndexOf('['); int end = txt.LastIndexOf('%'); if (start >= 0 && end > start) { double p; if (double.TryParse(txt.Substring(start + 1, end - start - 1), out p)) totalP += p; } } int avgP = (int)(totalP / (parent.Nodes.Count > 0 ? parent.Nodes.Count : 1)); string cleanName = parent.Text.Split('[')[0].Trim(); parent.Text = cleanName + " [" + avgP + "%]"; UpdateParentNode(parent.Parent); }
-        public void CompleteTask(string status) { if (Card != null && !Card.IsDisposed) { Card.BeginInvoke(new MethodInvoker(delegate { if (StatusLbl != null) StatusLbl.Text = "Status: " + status; if (PauseBtn != null) PauseBtn.Visible = false; if (CancelBtn != null) CancelBtn.Visible = false; if (OpenBtn != null) OpenBtn.Visible = (status == "Completed"); if (DeleteBtn != null) DeleteBtn.Visible = (status == "Completed"); if (RemoveBtn != null) RemoveBtn.Visible = true; if (Progress != null) Progress.Value = 100; if (SpeedLbl != null) SpeedLbl.Text = "---"; UpdateTreeNodes(); })); } }
+        public void CompleteTask(string status) { 
+            IsCompleted = true;
+            if (Card != null && !Card.IsDisposed) { Card.BeginInvoke(new MethodInvoker(delegate { if (StatusLbl != null) StatusLbl.Text = "Status: " + status; if (PauseBtn != null) PauseBtn.Visible = false; if (CancelBtn != null) CancelBtn.Visible = false; if (OpenBtn != null) OpenBtn.Visible = (status == "Completed"); if (DeleteBtn != null) DeleteBtn.Visible = (status == "Completed"); if (RemoveBtn != null) RemoveBtn.Visible = true; if (Progress != null) { Progress.Value = 100; Progress.Update(); } if (SpeedLbl != null) SpeedLbl.Text = "---"; UpdateTreeNodes(); })); } 
+        }
     }
     public class TransferItem { public string LocalPath { get; set; } public string RelativePath { get; set; } public string DestinationPath { get; set; } public long TotalSize { get; set; } public long TransferredBytes { get { return System.Threading.Interlocked.Read(ref transferredBytesBacking); } } public long transferredBytesBacking; public TreeNode NodeRef { get; set; } }
 }
