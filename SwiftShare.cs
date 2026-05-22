@@ -54,6 +54,29 @@ namespace FileTransferApp
         private FlowLayoutPanel historyFlow;
         private MenuStrip mainMenu;
         private Label infoLbl;
+        private ImageList imageList;
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct SHFILEINFO
+        {
+            public IntPtr hIcon;
+            public int iIcon;
+            public uint dwAttributes;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+            public string szDisplayName;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 80)]
+            public string szTypeName;
+        };
+
+        public const uint SHGFI_ICON = 0x100;
+        public const uint SHGFI_SMALLICON = 0x1;
+        public const uint SHGFI_USEFILEATTRIBUTES = 0x10;
+
+        [DllImport("shell32.dll")]
+        public static extern IntPtr SHGetFileInfo(string pszPath, uint dwFileAttributes, ref SHFILEINFO psfi, uint cbSizeFileInfo, uint uFlags);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        extern static bool DestroyIcon(IntPtr handle);
         
         private Color primaryColor = Color.FromArgb(63, 81, 181); 
         private Color sidebarColor = Color.FromArgb(33, 33, 33);
@@ -421,6 +444,35 @@ namespace FileTransferApp
             historyCard.Controls.Add(historyFlow);
 
             SetupDragDrop(lvLocal, lvRemote);
+
+            imageList = new ImageList();
+            imageList.ColorDepth = ColorDepth.Depth32Bit;
+            imageList.ImageSize = new Size(16, 16);
+            lvLocal.SmallImageList = imageList;
+            lvRemote.SmallImageList = imageList;
+        }
+
+        private int GetIconIndex(string path, bool isFolder, bool useAttributes = true)
+        {
+            string key = isFolder ? (useAttributes ? "folder" : "drive_" + path) : Path.GetExtension(path).ToLower();
+            if (string.IsNullOrEmpty(key)) key = ".unknown";
+            if (!imageList.Images.ContainsKey(key))
+            {
+                try {
+                    SHFILEINFO shfi = new SHFILEINFO();
+                    uint flags = SHGFI_ICON | SHGFI_SMALLICON;
+                    if (useAttributes) flags |= SHGFI_USEFILEATTRIBUTES;
+                    uint attributes = isFolder ? (uint)0x10 : (uint)0x80;
+                    if (SHGetFileInfo(path, attributes, ref shfi, (uint)Marshal.SizeOf(shfi), flags) != IntPtr.Zero) {
+                        if (shfi.hIcon != IntPtr.Zero) {
+                            Icon icon = (Icon)Icon.FromHandle(shfi.hIcon).Clone();
+                            DestroyIcon(shfi.hIcon);
+                            imageList.Images.Add(key, icon);
+                        }
+                    }
+                } catch { }
+            }
+            return imageList.Images.IndexOfKey(key);
         }
 
         private void CopyLocalFiles()
@@ -585,12 +637,12 @@ namespace FileTransferApp
             SafeInvoke(() => {
                 try {
                     txtLocal.Text = path; lvLocal.Items.Clear();
-                    if (string.IsNullOrEmpty(path)) { foreach (var drive in DriveInfo.GetDrives()) { ListViewItem item = new ListViewItem(drive.Name); item.SubItems.Add(""); item.SubItems.Add("Drive"); item.Tag = "D"; lvLocal.Items.Add(item); } }
+                    if (string.IsNullOrEmpty(path)) { foreach (var drive in DriveInfo.GetDrives()) { ListViewItem item = new ListViewItem(drive.Name); item.SubItems.Add(""); item.SubItems.Add("Drive"); item.Tag = "D"; item.ImageIndex = GetIconIndex(drive.Name, true, false); lvLocal.Items.Add(item); } }
                     else {
                         if (!Directory.Exists(path)) return;
-                        DirectoryInfo di = new DirectoryInfo(path); ListViewItem up = new ListViewItem(".."); up.SubItems.Add(""); up.SubItems.Add("Folder"); up.Tag = "UP"; lvLocal.Items.Add(up);
-                        foreach(var d in di.GetDirectories()) { try { if ((d.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden) continue; ListViewItem item = new ListViewItem(d.Name); item.SubItems.Add(""); item.SubItems.Add("Folder"); item.Tag = "D"; lvLocal.Items.Add(item); } catch {} }
-                        foreach(var f in di.GetFiles()) { try { if ((f.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden) continue; ListViewItem item = new ListViewItem(f.Name); item.SubItems.Add(FormatSize(f.Length)); item.SubItems.Add("File"); item.Tag = "F"; lvLocal.Items.Add(item); } catch {} }
+                        DirectoryInfo di = new DirectoryInfo(path); ListViewItem up = new ListViewItem(".."); up.SubItems.Add(""); up.SubItems.Add("Folder"); up.Tag = "UP"; up.ImageIndex = GetIconIndex(path, true); lvLocal.Items.Add(up);
+                        foreach(var d in di.GetDirectories()) { try { if ((d.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden) continue; ListViewItem item = new ListViewItem(d.Name); item.SubItems.Add(""); item.SubItems.Add("Folder"); item.Tag = "D"; item.ImageIndex = GetIconIndex(d.FullName, true); lvLocal.Items.Add(item); } catch {} }
+                        foreach(var f in di.GetFiles()) { try { if ((f.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden) continue; ListViewItem item = new ListViewItem(f.Name); item.SubItems.Add(FormatSize(f.Length)); item.SubItems.Add("File"); item.Tag = "F"; item.ImageIndex = GetIconIndex(f.FullName, false); lvLocal.Items.Add(item); } catch {} }
                     }
                 } catch (Exception ex) { MessageBox.Show("Cannot access local path: " + ex.Message); }
             });
@@ -610,9 +662,9 @@ namespace FileTransferApp
                         byte[] resBuf = new byte[resLen]; await ReadFullAsync(ns, resBuf, resLen); string resStr = Encoding.UTF8.GetString(resBuf);
                         SafeInvoke(() => {
                             lvRemote.Items.Clear(); txtRemote.Text = currentRemotePath;
-                            if (!string.IsNullOrEmpty(currentRemotePath)) { ListViewItem up = new ListViewItem(".."); up.SubItems.Add(""); up.SubItems.Add("Folder"); up.Tag = "UP"; lvRemote.Items.Add(up); }
+                            if (!string.IsNullOrEmpty(currentRemotePath)) { ListViewItem up = new ListViewItem(".."); up.SubItems.Add(""); up.SubItems.Add("Folder"); up.Tag = "UP"; up.ImageIndex = GetIconIndex(currentRemotePath, true); lvRemote.Items.Add(up); }
                             string[] lines = resStr.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-                            foreach(string line in lines) { string[] parts = line.Split('|'); string type = parts[0]; string name = parts[1]; string size = parts.Length > 2 ? parts[2] : ""; ListViewItem item = new ListViewItem(name); item.SubItems.Add(type == "D" ? "" : FormatSize(long.Parse(size))); item.SubItems.Add(type == "D" ? (string.IsNullOrEmpty(currentRemotePath) ? "Drive" : "Folder") : "File"); item.Tag = type; lvRemote.Items.Add(item); }
+                            foreach(string line in lines) { string[] parts = line.Split('|'); string type = parts[0]; string name = parts[1]; string size = parts.Length > 2 ? parts[2] : ""; ListViewItem item = new ListViewItem(name); item.SubItems.Add(type == "D" ? "" : FormatSize(long.Parse(size))); item.SubItems.Add(type == "D" ? (string.IsNullOrEmpty(currentRemotePath) ? "Drive" : "Folder") : "File"); item.Tag = type; item.ImageIndex = GetIconIndex(name, type == "D"); lvRemote.Items.Add(item); }
                         });
                     }
                 }
@@ -706,14 +758,16 @@ namespace FileTransferApp
         private void PopulateTaskTree(TransferTask task)
         {
             Panel pnl = new Panel { Location = new Point(10, 75), Size = new Size(task.Card.ClientSize.Width - 20, 160), BorderStyle = BorderStyle.None, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right };
-            TreeView tv = new TreeView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, Font = new Font("Segoe UI", 9) };
+            TreeView tv = new TreeView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, Font = new Font("Segoe UI", 9), ImageList = imageList };
             task.TreePanel = pnl; task.FileTree = tv; pnl.Controls.Add(tv); task.Card.Controls.Add(pnl);
             foreach (var file in task.Files) {
                 string[] parts = file.RelativePath.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
                 TreeNodeCollection currentNodes = tv.Nodes; TreeNode lastNode = null;
-                foreach (string part in parts) {
+                for (int i = 0; i < parts.Length; i++) {
+                    string part = parts[i];
+                    bool isFolder = i < parts.Length - 1;
                     TreeNode nextNode = null; foreach (TreeNode node in currentNodes) { if (node.Text.StartsWith(part)) { nextNode = node; break; } }
-                    if (nextNode == null) { nextNode = new TreeNode(part); currentNodes.Add(nextNode); }
+                    if (nextNode == null) { nextNode = new TreeNode(part); nextNode.ImageIndex = nextNode.SelectedImageIndex = GetIconIndex(part, isFolder); currentNodes.Add(nextNode); }
                     currentNodes = nextNode.Nodes; lastNode = nextNode;
                 }
                 file.NodeRef = lastNode;
