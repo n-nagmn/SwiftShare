@@ -885,19 +885,33 @@ namespace FileTransferApp
                         await client.ConnectAsync(ip, port);
                         using (NetworkStream ns = client.GetStream()) {
                             await SendCommandAsync(ns, "PUSH|" + item.RelativePath + "|" + item.TotalSize + "|" + task.TaskId);
-                            using (FileStream fs = new FileStream(item.LocalPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 8388608, FileOptions.SequentialScan | FileOptions.Asynchronous)) { 
-                                byte[] buf = new byte[8388608]; 
-                                int r; 
-                                while ((r = await fs.ReadAsync(buf, 0, buf.Length)) > 0) { 
-                                    if (task.IsCancelled) break; 
-                                    while (task.IsPaused && !task.IsCancelled) await Task.Delay(200); 
-                                    await ns.WriteAsync(buf, 0, r); 
-                                    totalSent += (long)r; 
-                                    item.TransferredBytes += (long)r; 
-                                    double speed = (totalSent / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001); 
-                                    task.UpdateProgress(totalSent, speed); 
-                                } 
-                            }
+                        using (FileStream fs = new FileStream(item.LocalPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4194304, FileOptions.SequentialScan | FileOptions.Asynchronous)) { 
+                            byte[] buf1 = new byte[2097152]; 
+                            byte[] buf2 = new byte[2097152]; 
+                            byte[] readBuf = buf1;
+                            byte[] writeBuf = buf2;
+                            Task writeTask = Task.Delay(0);
+                            
+                            int r = await fs.ReadAsync(readBuf, 0, readBuf.Length);
+                            while (r > 0) { 
+                                if (task.IsCancelled) break; 
+                                while (task.IsPaused && !task.IsCancelled) await Task.Delay(200); 
+                                await writeTask;
+                                
+                                byte[] temp = readBuf; readBuf = writeBuf; writeBuf = temp;
+                                int bytesToWrite = r;
+                                writeTask = ns.WriteAsync(writeBuf, 0, bytesToWrite);
+                                
+                                totalSent += r; 
+                                item.TransferredBytes += r; 
+                                double speed = (totalSent / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001); 
+                                task.UpdateProgress(totalSent, speed); 
+                                
+                                r = await fs.ReadAsync(readBuf, 0, readBuf.Length);
+                            } 
+                            await writeTask;
+                        }
+
                         }
                     }
                 } catch { task.CompleteTask("Error"); }
