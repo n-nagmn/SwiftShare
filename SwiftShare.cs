@@ -1161,10 +1161,8 @@ namespace FileTransferApp
                     
                     int itemHeight = tv.ItemHeight;
                     int requiredHeight = Math.Max(160, Math.Min(1200, count * itemHeight + 10));
-                    if (pnl.Height != requiredHeight) {
-                        pnl.Height = requiredHeight;
-                        task.Card.Height = 75 + requiredHeight + 15;
-                    }
+                    pnl.Height = requiredHeight;
+                    task.Card.Height = 75 + requiredHeight + 15;
                 };
 
                 tv.AfterExpand += (s, e) => updateSize();
