@@ -56,6 +56,8 @@ namespace FileTransferApp
         private MenuStrip mainMenu;
         private Label infoLbl;
         private ImageList imageList;
+        private NotifyIcon trayIcon;
+        private ContextMenu trayMenu;
 
         [StructLayout(LayoutKind.Sequential)]
         public struct SHFILEINFO
@@ -105,6 +107,7 @@ namespace FileTransferApp
         {
             UpdateNetworkInfo();
             InitializeComponent();
+            SetupTrayIcon();
             
             this.Load += (s, e) => {
                 StartTcpServer();
@@ -114,11 +117,40 @@ namespace FileTransferApp
                 LoadLayoutSettings();
                 string dlDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
                 RefreshLocalList(dlDir);
+
+                if (Environment.GetCommandLineArgs().Length > 1 && Environment.GetCommandLineArgs()[1] == "/background") {
+                    this.BeginInvoke(new MethodInvoker(delegate {
+                        this.Hide();
+                        this.WindowState = FormWindowState.Minimized;
+                    }));
+                }
             };
 
             this.FormClosing += (s, e) => {
-                SaveLayoutSettings();
+                if (e.CloseReason == CloseReason.UserClosing) {
+                    e.Cancel = true;
+                    this.Hide();
+                    this.WindowState = FormWindowState.Minimized;
+                    trayIcon.ShowBalloonTip(2000, "SwiftShare", "Running in background", ToolTipIcon.Info);
+                } else {
+                    SaveLayoutSettings();
+                }
             };
+        }
+
+        private void SetupTrayIcon()
+        {
+            trayMenu = new ContextMenu();
+            trayMenu.MenuItems.Add("Open", (s, e) => { this.Show(); this.WindowState = FormWindowState.Normal; this.BringToFront(); });
+            trayMenu.MenuItems.Add("-");
+            trayMenu.MenuItems.Add("Exit", (s, e) => { SaveLayoutSettings(); trayIcon.Visible = false; Application.Exit(); });
+
+            trayIcon = new NotifyIcon();
+            trayIcon.Text = "SwiftShare";
+            trayIcon.Icon = this.Icon;
+            trayIcon.ContextMenu = trayMenu;
+            trayIcon.Visible = true;
+            trayIcon.DoubleClick += (s, e) => { this.Show(); this.WindowState = FormWindowState.Normal; this.BringToFront(); };
         }
 
         private void LoadLayoutSettings()
@@ -638,7 +670,7 @@ namespace FileTransferApp
         private void SetAutoLaunch(bool enable) {
             try {
                 using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", true)) {
-                    if (enable) key.SetValue("SwiftShare", "\"" + Application.ExecutablePath + "\"");
+                    if (enable) key.SetValue("SwiftShare", "\"" + Application.ExecutablePath + "\" /background");
                     else if (key != null && key.GetValue("SwiftShare") != null) key.DeleteValue("SwiftShare");
                 }
             } catch (Exception ex) { MessageBox.Show("Failed to set auto-launch: " + ex.Message); }
