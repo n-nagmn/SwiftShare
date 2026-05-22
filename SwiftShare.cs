@@ -273,7 +273,7 @@ namespace FileTransferApp
             this.MinimumSize = new Size(1300, 840);
             this.StartPosition = FormStartPosition.CenterScreen;
             this.BackColor = bgColor;
-            this.Font = new Font("Segoe UI", 10);
+            this.Font = new Font("Yu Gothic UI", 9);
             this.AllowDrop = true;
 
             mainMenu = new MenuStrip();
