@@ -1089,10 +1089,11 @@ namespace FileTransferApp
             task.RemoveBtn = removeBtn; card.Controls.Add(removeBtn);
             expandBtn.Click += (s, e) => { 
                 if (card.Height == 70) { 
-                    card.Height = 250; expandBtn.Text = "Files ▲"; 
+                    expandBtn.Text = "Files ▲"; 
                     PopulateTaskTree(task); 
                 } else { 
                     card.Height = 70; expandBtn.Text = "Files ▼"; 
+                    if (task.TreePanel != null) { card.Controls.Remove(task.TreePanel); task.TreePanel.Dispose(); task.TreePanel = null; }
                 } 
             };
             card.Controls.Add(expandBtn);
@@ -1102,7 +1103,8 @@ namespace FileTransferApp
 
         private void PopulateTaskTree(TransferTask task)
         {
-            Panel pnl = new Panel { Location = new Point(10, 75), Size = new Size(task.Card.ClientSize.Width - 20, 160), BorderStyle = BorderStyle.None, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right };
+            if (task.TreePanel != null) { task.Card.Controls.Remove(task.TreePanel); task.TreePanel.Dispose(); task.TreePanel = null; }
+            Panel pnl = new Panel { Location = new Point(10, 75), Size = new Size(task.Card.ClientSize.Width - 20, 160), BorderStyle = BorderStyle.None, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             TreeView tv = new TreeView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Segoe UI", 9), ImageList = imageList, ShowLines = true, ShowPlusMinus = true };
             
             // Standard WinForms fix for mouse wheel: focus on hover
@@ -1113,6 +1115,8 @@ namespace FileTransferApp
             if (task.Files.Count > 50000) {
                 tv.Nodes.Add("Hyper-scale transfer detected. Detailed file list hidden to maintain performance.");
                 tv.Nodes.Add("Total Items: " + task.TotalItems);
+                tv.EndUpdate();
+                task.Card.Height = 75 + 160 + 15;
                 return;
             }
 
@@ -1140,7 +1144,15 @@ namespace FileTransferApp
                         file.NodeRef = lastNode;
                     }
                 }
-            } finally { tv.EndUpdate(); }
+            } finally { 
+                tv.EndUpdate(); 
+                tv.ExpandAll();
+                int nodeCount = tv.GetNodeCount(true);
+                int itemHeight = tv.ItemHeight;
+                int requiredHeight = Math.Max(160, Math.Min(1200, nodeCount * itemHeight + 20));
+                pnl.Height = requiredHeight;
+                task.Card.Height = 75 + requiredHeight + 15;
+            }
         }
 
         private async void StartTcpServer()
