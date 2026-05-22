@@ -918,9 +918,10 @@ namespace FileTransferApp
                         foreach (string path in paths) {
                             if (task.IsCancelled) break;
                             if (File.Exists(path)) {
-                                string finalRelPath = Path.Combine(remoteDestDir, Path.GetFileName(path)).Replace("\\", "/");
-                                task.Files.Add(new TransferItem { RelativePath = finalRelPath, TotalSize = new FileInfo(path).Length });
-                                await StreamSingleFilePersistent(ns, path, finalRelPath, task, sw);
+                                string relPath = Path.GetFileName(path);
+                                string remotePath = Path.Combine(remoteDestDir, relPath).Replace("\\", "/");
+                                lock(task.Files) { task.Files.Add(new TransferItem { RelativePath = relPath, TotalSize = new FileInfo(path).Length }); }
+                                await StreamSingleFilePersistent(ns, path, remotePath, task, sw, relPath);
                                 processedItems++;
                                 task.ProcessedItems = processedItems;
                                 task.UpdateProgress(task.TransferredBytes, (task.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001));
@@ -935,68 +936,70 @@ namespace FileTransferApp
                             await SendCommandAsync(ns, "TASK_END|" + task.TaskId);
                             await Task.Delay(300);
                         }
-                    }
-                }
-            } catch (Exception ex) { task.CompleteTask("Failed: " + ex.Message); return; }
+                        }
+                        }
+                        } catch (Exception ex) { task.CompleteTask("Failed: " + ex.Message); return; }
 
-            task.CompleteTask(task.IsCancelled ? "Cancelled" : "Completed");
-            SafeInvoke(() => { RefreshRemoteList(); });
-        }
+                        task.CompleteTask(task.IsCancelled ? "Cancelled" : "Completed");
+                        SafeInvoke(() => { RefreshRemoteList(); });
+                        }
 
-        private Tuple<long, long> ScanDirectoryFast(string dir)
-        {
-            long count = 1; // Count the folder itself
-            long size = 0;
-            try {
-                foreach (string f in Directory.GetFiles(dir)) {
-                    try { size += new FileInfo(f).Length; count++; } catch {}
-                }
-                foreach (string d in Directory.GetDirectories(dir)) {
-                    var sub = ScanDirectoryFast(d);
-                    count += sub.Item1;
-                    size += sub.Item2;
-                }
-            } catch {}
-            return new Tuple<long, long>(count, size);
-        }
+                        private Tuple<long, long> ScanDirectoryFast(string dir)
+                        {
+                        long count = 1; // Count the folder itself
+                        long size = 0;
+                        try {
+                        foreach (string f in Directory.GetFiles(dir)) {
+                        try { size += new FileInfo(f).Length; count++; } catch {}
+                        }
+                        foreach (string d in Directory.GetDirectories(dir)) {
+                        var sub = ScanDirectoryFast(d);
+                        count += sub.Item1;
+                        size += sub.Item2;
+                        }
+                        } catch {}
+                        return new Tuple<long, long>(count, size);
+                        }
 
-        private async Task<long> SendFolderRecursive(NetworkStream ns, string currentDir, string rootDir, string remoteDestDir, TransferTask task, Stopwatch sw, long currentProcessed)
-        {
-            if (task.IsCancelled) return currentProcessed;
+                        private async Task<long> SendFolderRecursive(NetworkStream ns, string currentDir, string rootDir, string remoteDestDir, TransferTask task, Stopwatch sw, long currentProcessed)
+                        {
+                        if (task.IsCancelled) return currentProcessed;
 
-            try {
-                string relDir = currentDir.Substring(rootDir.Length).Replace("\\", "/");
-                string remoteDir = Path.Combine(remoteDestDir, relDir).Replace("\\", "/");
-                await SendCommandAsync(ns, "MKDIR|" + remoteDir + "|" + task.TaskId);
-                currentProcessed++;
-                task.ProcessedItems = currentProcessed;
-                task.UpdateProgress(task.TransferredBytes, (task.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001));
+                        try {
+                        string relDir = currentDir.Substring(rootDir.Length).Replace("\\", "/");
+                        string remoteDir = Path.Combine(remoteDestDir, relDir).Replace("\\", "/");
+                        lock(task.Files) { task.Files.Add(new TransferItem { RelativePath = relDir, TotalSize = 0 }); }
+                        await SendCommandAsync(ns, "MKDIR|" + remoteDir + "|" + task.TaskId + "|" + relDir);
+                        currentProcessed++;
+                        task.ProcessedItems = currentProcessed;
+                        task.UpdateProgress(task.TransferredBytes, (task.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001));
 
-                foreach (string file in Directory.GetFiles(currentDir)) {
-                    if (task.IsCancelled) break;
-                    string relPath = file.Substring(rootDir.Length).Replace("\\", "/");
-                    await StreamSingleFilePersistent(ns, file, Path.Combine(remoteDestDir, relPath), task, sw);
-                    currentProcessed++;
-                    task.ProcessedItems = currentProcessed;
-                    task.UpdateProgress(task.TransferredBytes, (task.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001));
-                }
+                        foreach (string file in Directory.GetFiles(currentDir)) {
+                        if (task.IsCancelled) break;
+                        string relPath = file.Substring(rootDir.Length).Replace("\\", "/");
+                        lock(task.Files) { task.Files.Add(new TransferItem { RelativePath = relPath, TotalSize = new FileInfo(file).Length }); }
+                        await StreamSingleFilePersistent(ns, file, Path.Combine(remoteDestDir, relPath), task, sw, relPath);
+                        currentProcessed++;
+                        task.ProcessedItems = currentProcessed;
+                        task.UpdateProgress(task.TransferredBytes, (task.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001));
+                        }
 
-                foreach (string dir in Directory.GetDirectories(currentDir)) {
-                    if (task.IsCancelled) break;
-                    currentProcessed = await SendFolderRecursive(ns, dir, rootDir, remoteDestDir, task, sw, currentProcessed);
-                }
-            } catch {}
+                        foreach (string dir in Directory.GetDirectories(currentDir)) {
+                        if (task.IsCancelled) break;
+                        currentProcessed = await SendFolderRecursive(ns, dir, rootDir, remoteDestDir, task, sw, currentProcessed);
+                        }
+                        } catch {}
 
-            return currentProcessed;
-        }
+                        return currentProcessed;
+                        }
 
-        private async Task StreamSingleFilePersistent(NetworkStream ns, string localPath, string remotePath, TransferTask task, Stopwatch sw)
-        {
-            try {
-                long fsLen = new FileInfo(localPath).Length;
-                await SendCommandAsync(ns, "PUSH|" + remotePath + "|" + fsLen + "|" + task.TaskId);
-                if (fsLen > 0) {
-                    using (FileStream fs = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4194304, FileOptions.SequentialScan | FileOptions.Asynchronous)) { 
+                        private async Task StreamSingleFilePersistent(NetworkStream ns, string localPath, string remotePath, TransferTask task, Stopwatch sw, string relPathForTree)
+                        {
+                        try {
+                        long fsLen = new FileInfo(localPath).Length;
+                        await SendCommandAsync(ns, "PUSH|" + remotePath + "|" + fsLen + "|" + task.TaskId + "|" + relPathForTree);
+                        if (fsLen > 0) {
+                        using (FileStream fs = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4194304, FileOptions.SequentialScan | FileOptions.Asynchronous)) { 
                         byte[] buf1 = new byte[2097152]; byte[] buf2 = new byte[2097152]; 
                         byte[] rB = buf1; byte[] wB = buf2; Task wT = Task.Delay(0);
                         int r = await fs.ReadAsync(rB, 0, rB.Length);
@@ -1011,11 +1014,10 @@ namespace FileTransferApp
                             r = await fs.ReadAsync(rB, 0, rB.Length);
                         }
                         await wT;
-                    }
-                }
-            } catch { throw; } // Let outer loop handle connection loss
-        }
-
+                        }
+                        }
+                        } catch { throw; } 
+                        }
         private void CreateTaskCard(TransferTask task)
         {
             Panel card = new Panel { Height = 70, BackColor = Color.White, Margin = new Padding(0, 0, 0, 10), BorderStyle = BorderStyle.FixedSingle };
@@ -1085,7 +1087,14 @@ namespace FileTransferApp
                 historyFlow.Controls.Remove(card); card.Dispose(); 
             };
             task.RemoveBtn = removeBtn; card.Controls.Add(removeBtn);
-            expandBtn.Click += (s, e) => { if (card.Height == 70) { card.Height = 250; expandBtn.Text = "Files ▲"; if (task.TreePanel == null) PopulateTaskTree(task); } else { card.Height = 70; expandBtn.Text = "Files ▼"; } };
+            expandBtn.Click += (s, e) => { 
+                if (card.Height == 70) { 
+                    card.Height = 250; expandBtn.Text = "Files ▲"; 
+                    PopulateTaskTree(task); 
+                } else { 
+                    card.Height = 70; expandBtn.Text = "Files ▼"; 
+                } 
+            };
             card.Controls.Add(expandBtn);
             card.Width = historyFlow.ClientSize.Width > 50 ? historyFlow.ClientSize.Width - 25 : 850;
             historyFlow.Controls.Add(card); historyFlow.Controls.SetChildIndex(card, 0);
@@ -1098,25 +1107,27 @@ namespace FileTransferApp
             tv.MouseEnter += (s, e) => tv.Focus();
             task.TreePanel = pnl; task.FileTree = tv; pnl.Controls.Add(tv); task.Card.Controls.Add(pnl);
 
-            if (task.Files.Count > 10000) {
-                tv.Nodes.Add("Large transfer detected. Detailed file list hidden to maintain performance.");
+            if (task.Files.Count > 50000) {
+                tv.Nodes.Add("Hyper-scale transfer detected. Detailed file list hidden to maintain performance.");
                 tv.Nodes.Add("Total Items: " + task.TotalItems);
                 return;
             }
 
             tv.BeginUpdate();
             try {
-                foreach (var file in task.Files) {
-                    string[] parts = file.RelativePath.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
-                    TreeNodeCollection currentNodes = tv.Nodes; TreeNode lastNode = null;
-                    for (int i = 0; i < parts.Length; i++) {
-                        string part = parts[i];
-                        bool isFolder = i < parts.Length - 1;
-                        TreeNode nextNode = null; foreach (TreeNode node in currentNodes) { if (node.Text.StartsWith(part)) { nextNode = node; break; } }
-                        if (nextNode == null) { nextNode = new TreeNode(part); nextNode.ImageIndex = nextNode.SelectedImageIndex = GetIconIndex(part, isFolder); currentNodes.Add(nextNode); }
-                        currentNodes = nextNode.Nodes; lastNode = nextNode;
+                lock(task.Files) {
+                    foreach (var file in task.Files) {
+                        string[] parts = file.RelativePath.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
+                        TreeNodeCollection currentNodes = tv.Nodes; TreeNode lastNode = null;
+                        for (int i = 0; i < parts.Length; i++) {
+                            string part = parts[i];
+                            bool isFolder = i < parts.Length - 1;
+                            TreeNode nextNode = null; foreach (TreeNode node in currentNodes) { if (node.Text == part) { nextNode = node; break; } }
+                            if (nextNode == null) { nextNode = new TreeNode(part); nextNode.ImageIndex = nextNode.SelectedImageIndex = GetIconIndex(part, isFolder); currentNodes.Add(nextNode); }
+                            currentNodes = nextNode.Nodes; lastNode = nextNode;
+                        }
+                        file.NodeRef = lastNode;
                     }
-                    file.NodeRef = lastNode;
                 }
             } finally { tv.EndUpdate(); }
         }
@@ -1174,9 +1185,14 @@ namespace FileTransferApp
                         else if (cmd == "MKDIR") {
                             string dirPath = parts[1];
                             string tId = parts.Length > 2 ? parts[2] : "";
+                            string relDir = parts.Length > 3 ? parts[3] : Path.GetFileName(dirPath);
                             try { 
                                 if (!Directory.Exists(dirPath)) Directory.CreateDirectory(dirPath); 
-                                lock(activeInTasks) { if (activeInTasks.ContainsKey(tId)) { var t = activeInTasks[tId]; t.ProcessedItems++; t.UpdateProgress(t.TransferredBytes, 0); } }
+                                lock(activeInTasks) { if (activeInTasks.ContainsKey(tId)) { 
+                                    var t = activeInTasks[tId]; t.ProcessedItems++; 
+                                    lock(t.Files) { t.Files.Add(new TransferItem { RelativePath = relDir, TotalSize = 0 }); }
+                                    t.UpdateProgress(t.TransferredBytes, 0); 
+                                } }
                             } catch {}
                         }
                         else if (cmd == "SYNC_REMOVE_TASK") {
@@ -1199,16 +1215,17 @@ namespace FileTransferApp
                         else if (cmd == "TASK_REMOTE_DELETE") { string[] paths = parts[1].Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries); foreach(var p in paths) { try { if (File.Exists(p)) { File.SetAttributes(p, FileAttributes.Normal); File.Delete(p); } else if (Directory.Exists(p)) Directory.Delete(p, true); } catch {} } SafeInvoke(() => RefreshLocalList(txtLocal.Text)); }
                         else if (cmd == "TASK_PULL") { int cp = int.Parse(parts[1]); string ld = parts[2]; string[] rp = parts[3].Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries); string ci = ((IPEndPoint)client.Client.RemoteEndPoint).Address.ToString(); string bd = Path.GetDirectoryName(rp[0]); ProcessOutgoingItems(ci, cp, rp, bd, ld); }
                         else if (cmd == "PUSH") {
-                            string relPath = parts[1]; long fs = long.Parse(parts[2]); string tId = parts.Length > 3 ? parts[3] : "";
+                            string destPath = parts[1]; long fs = long.Parse(parts[2]); string tId = parts.Length > 3 ? parts[3] : "";
+                            string treeRelPath = parts.Length > 4 ? parts[4] : Path.GetFileName(destPath);
                             lock(activeInTasks) { if (activeInTasks.ContainsKey(tId)) taskContext = activeInTasks[tId]; }
-                            TransferItem item = new TransferItem { RelativePath = relPath, TotalSize = fs, LocalPath = "", DestinationPath = relPath }; 
+                            TransferItem item = new TransferItem { RelativePath = treeRelPath, TotalSize = fs, LocalPath = "", DestinationPath = destPath }; 
                             if (taskContext != null) { lock(taskContext.Files) { taskContext.Files.Add(item); } }
-                            string saveDir = Path.GetDirectoryName(relPath); if (!Directory.Exists(saveDir)) Directory.CreateDirectory(saveDir);
+                            string saveDir = Path.GetDirectoryName(destPath); if (!Directory.Exists(saveDir)) Directory.CreateDirectory(saveDir);
                             if (!sw.IsRunning) sw.Start();
                             try {
-                                if (fs == 0) { using (File.Create(relPath)) {} }
+                                if (fs == 0) { using (File.Create(destPath)) {} }
                                 else {
-                                    using (FileStream fstream = new FileStream(relPath, FileMode.Create, FileAccess.Write, FileShare.None, 4194304, FileOptions.SequentialScan | FileOptions.Asynchronous)) { 
+                                    using (FileStream fstream = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None, 4194304, FileOptions.SequentialScan | FileOptions.Asynchronous)) { 
                                         if (fs > 0) fstream.SetLength(fs);
                                         byte[] buf1 = new byte[2097152]; byte[] buf2 = new byte[2097152]; 
                                         byte[] rB = buf1; byte[] wB = buf2; long total = 0; Task wT = Task.Delay(0);
@@ -1229,12 +1246,11 @@ namespace FileTransferApp
                                             r = await ns.ReadAsync(rB, 0, (int)Math.Min((long)rB.Length, fs - total));
                                         } 
                                         await wT;
-                                        }
-                                        }
-                                        lock(activeInTasks) { if (activeInTasks.ContainsKey(tId)) { var t = activeInTasks[tId]; t.ProcessedItems++; t.UpdateProgress(t.TransferredBytes, 0); } }
-                                        } catch { if (taskContext != null) taskContext.CompleteTask("Write Error"); }
-                                        }
-
+                                    }
+                                }
+                                lock(activeInTasks) { if (activeInTasks.ContainsKey(tId)) { var t = activeInTasks[tId]; t.ProcessedItems++; t.UpdateProgress(t.TransferredBytes, 0); } }
+                            } catch { if (taskContext != null) taskContext.CompleteTask("Write Error"); }
+                        }
                         else if (cmd == "EXCHANGE_ALIASES") {
                             string peerData = parts.Length > 1 ? parts[1] : "";
                             MergeAliasSyncString(peerData);
