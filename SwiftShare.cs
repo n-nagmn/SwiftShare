@@ -860,7 +860,7 @@ namespace FileTransferApp
 
         private string FormatSize(long bytes) { if (bytes < 1024) return bytes + " B"; if (bytes < 1024 * 1024) return (bytes / 1024.0).ToString("F1") + " KB"; if (bytes < 1024 * 1024 * 1024) return (bytes / 1024.0 / 1024.0).ToString("F1") + " MB"; return (bytes / 1024.0 / 1024.0 / 1024.0).ToString("F2") + " GB"; }
         private async Task SendCommandAsync(NetworkStream ns, string cmdStr) { byte[] cmdBytes = Encoding.UTF8.GetBytes(cmdStr); byte[] lenBytes = BitConverter.GetBytes(cmdBytes.Length); await ns.WriteAsync(lenBytes, 0, 4); await ns.WriteAsync(cmdBytes, 0, cmdBytes.Length); }
-        private async Task<string> ReadCommandAsync(NetworkStream ns) { byte[] lenBuf = new byte[4]; await ReadFullAsync(ns, lenBuf, 4); int len = BitConverter.ToInt32(lenBuf, 0); if (len <= 0 || len > 1048576) throw new Exception("Invalid command length"); byte[] cmdBuf = new byte[len]; await ReadFullAsync(ns, cmdBuf, len); return Encoding.UTF8.GetString(cmdBuf); }
+        private async Task<string> ReadCommandAsync(NetworkStream ns) { byte[] lenBuf = new byte[4]; await ReadFullAsync(ns, lenBuf, 4); int len = BitConverter.ToInt32(lenBuf, 0); if (len <= 0 || len > 67108864) throw new Exception("Invalid command length: " + len); byte[] cmdBuf = new byte[len]; await ReadFullAsync(ns, cmdBuf, len); return Encoding.UTF8.GetString(cmdBuf); }
 
         private async Task RequestPullItems(string ip, int port, string[] remotePaths, string localDestDir)
         {
