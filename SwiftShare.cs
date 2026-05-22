@@ -1079,6 +1079,68 @@ namespace FileTransferApp
             } catch { }
         }
 
+        private string GetAliasSyncString() {
+            StringBuilder sb = new StringBuilder();
+            lock (peerNames) {
+                foreach(var kvp in peerNames) {
+                    string[] p = kvp.Value.Split('|');
+                    if (p.Length > 1) { sb.Append(kvp.Key).Append(",").Append(p[0]).Append(",").Append(p[1]).Append(";"); }
+                }
+            }
+            return sb.ToString();
+        }
+
+        private void MergeAliasSyncString(string data) {
+            if (string.IsNullOrEmpty(data)) return;
+            SafeInvoke(() => {
+                bool updated = false;
+                string[] entries = data.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+                foreach(string entry in entries) {
+                    string[] p = entry.Split(',');
+                    if (p.Length >= 3) {
+                        string ip = p[0]; string name = p[1]; long ts = 0;
+                        if (long.TryParse(p[2], out ts)) {
+                            bool shouldUpdate = true;
+                            lock (peerNames) {
+                                if (peerNames.ContainsKey(ip)) {
+                                    string[] cur = peerNames[ip].Split('|');
+                                    long curTs = cur.Length > 1 ? long.Parse(cur[1]) : 0;
+                                    if (ts <= curTs) shouldUpdate = false;
+                                }
+                                if (shouldUpdate) {
+                                    if (string.IsNullOrEmpty(name)) {
+                                        peerNames.Remove(ip);
+                                        try { using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\SwiftShare\PeerNames")) { key.DeleteValue(ip, false); } } catch {}
+                                    } else {
+                                        peerNames[ip] = name + "|" + ts;
+                                        try { using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\SwiftShare\PeerNames")) { key.SetValue(ip, peerNames[ip]); } } catch {}
+                                    }
+                                    updated = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (updated) peerList.Invalidate();
+            });
+        }
+
+        private async void InitiateAliasSync(string ip, int port) {
+            try {
+                using (TcpClient client = new TcpClient()) {
+                    await client.ConnectAsync(ip, port);
+                    using (NetworkStream ns = client.GetStream()) {
+                        string myData = GetAliasSyncString();
+                        await SendCommandAsync(ns, "EXCHANGE_ALIASES|" + myData);
+                        string reply = await ReadCommandAsync(ns);
+                        if (reply.StartsWith("EXCHANGE_ALIASES_REPLY|")) {
+                            string replyData = reply.Length > 23 ? reply.Substring(23) : "";
+                            MergeAliasSyncString(replyData);
+                        }
+                    }
+                }
+            } catch { }
+        }
 
         private async void StartUdpListener() {
             try {
