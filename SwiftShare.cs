@@ -204,6 +204,15 @@ namespace FileTransferApp
                     }
                 }
             } catch { }
+            try {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\SwiftShare\PeerNames", false)) {
+                    if (key != null) {
+                        foreach (string valName in key.GetValueNames()) {
+                            peerNames[valName] = key.GetValue(valName).ToString();
+                        }
+                    }
+                }
+            } catch { }
         }
 
         private void SaveLayoutSettings()
@@ -771,8 +780,12 @@ namespace FileTransferApp
             bool isSelected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
             using (SolidBrush brush = new SolidBrush(isSelected ? primaryColor : sidebarColor)) e.Graphics.FillRectangle(brush, e.Bounds);
             string fullText = peerList.Items[e.Index].ToString(); string[] parts = fullText.Split(new string[] { " (" }, StringSplitOptions.None);
-            e.Graphics.DrawString(parts[0], new Font("Segoe UI Semibold", 10), Brushes.White, e.Bounds.X + 20, e.Bounds.Y + 8);
-            if (parts.Length > 1) { string speedText = parts[1].Replace(")", ""); e.Graphics.DrawString(speedText, new Font("Segoe UI", 8), Brushes.LightGray, e.Bounds.X + 20, e.Bounds.Y + 30); }
+            string ip = parts[0].Split(':')[0];
+            string displayName = peerNames.ContainsKey(ip) ? peerNames[ip] : parts[0];
+            e.Graphics.DrawString(displayName, new Font("Segoe UI Semibold", 10), Brushes.White, e.Bounds.X + 20, e.Bounds.Y + 8);
+            
+            string subText = (peerNames.ContainsKey(ip) ? parts[0] + " - " : "") + (parts.Length > 1 ? parts[1].Replace(")", "") : "");
+            if (!string.IsNullOrEmpty(subText)) { e.Graphics.DrawString(subText, new Font("Segoe UI", 8), Brushes.LightGray, e.Bounds.X + 20, e.Bounds.Y + 30); }
         }
 
         private void RefreshLocalList(string path)
