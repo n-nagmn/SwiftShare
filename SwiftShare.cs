@@ -1378,7 +1378,20 @@ namespace FileTransferApp
             long currentTicks = DateTime.UtcNow.Ticks;
             if (currentTicks - lastUiUpdateTicks < 1000000 && totalCurrent < TotalBytes) return; // Throttle to 10Hz
             lastUiUpdateTicks = currentTicks;
-            if (Card != null && !Card.IsDisposed) { Card.BeginInvoke(new MethodInvoker(delegate { if (Progress != null) { int p = (int)((totalCurrent * 100) / (TotalBytes > 0 ? TotalBytes : 1)); Progress.Value = Math.Min(100, p); } if (SpeedLbl != null) SpeedLbl.Text = speedMBs.ToString("F1") + " MB/s"; UpdateTreeNodes(); })); } 
+            if (Card != null && !Card.IsDisposed) { 
+                Card.BeginInvoke(new MethodInvoker(delegate { 
+                    if (Progress != null) { 
+                        int p = 0;
+                        if (TotalBytes > 0) {
+                            long pct = (totalCurrent * 100) / TotalBytes;
+                            p = (int)Math.Max(0, Math.Min(100, pct));
+                        }
+                        Progress.Value = p;
+                    } 
+                    if (SpeedLbl != null) SpeedLbl.Text = speedMBs.ToString("F1") + " MB/s"; 
+                    UpdateTreeNodes(); 
+                })); 
+            } 
         }
         private void UpdateTreeNodes() { if (FileTree == null) return; lock(Files) { foreach (var item in Files) { if (item.NodeRef != null) { int p = (int)((item.TransferredBytes * 100) / (item.TotalSize > 0 ? item.TotalSize : 1)); string newText = Path.GetFileName(item.RelativePath) + " [" + p + "%]"; if (item.NodeRef.Text != newText) item.NodeRef.Text = newText; UpdateParentNode(item.NodeRef.Parent); } } } }
         private void UpdateParentNode(TreeNode parent) { if (parent == null) return; double totalP = 0; foreach (TreeNode child in parent.Nodes) { string txt = child.Text; int start = txt.LastIndexOf('['); int end = txt.LastIndexOf('%'); if (start >= 0 && end > start) { double p; if (double.TryParse(txt.Substring(start + 1, end - start - 1), out p)) totalP += p; } } int avgP = (int)(totalP / (parent.Nodes.Count > 0 ? parent.Nodes.Count : 1)); string cleanName = parent.Text.Split('[')[0].Trim(); parent.Text = cleanName + " [" + avgP + "%]"; UpdateParentNode(parent.Parent); }
