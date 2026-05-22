@@ -706,19 +706,27 @@ namespace FileTransferApp
             foreach (string dir in Directory.GetDirectories(src)) CopyDirectory(dir, Path.Combine(dest, Path.GetFileName(dir)));
         }
 
-        private void DeleteLocalFiles()
+        private async void DeleteLocalFiles()
         {
             if (lvLocal.SelectedItems.Count == 0 || string.IsNullOrEmpty(txtLocal.Text)) return;
             if (MessageBox.Show("Delete selected local files?", "Confirm Delete", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes) {
+                var selectedPaths = new List<string>();
                 foreach (ListViewItem item in lvLocal.SelectedItems) {
                     string tag = item.Tag.ToString();
                     if (tag == "UP") continue;
-                    string p = tag.StartsWith("DRIVE|") ? tag.Split('|')[1] : Path.Combine(txtLocal.Text, item.Text);
-                    try {
-                        if (File.Exists(p)) { File.SetAttributes(p, FileAttributes.Normal); File.Delete(p); }
-                        else if (Directory.Exists(p)) Directory.Delete(p, true);
-                    } catch {}
+                    selectedPaths.Add(tag.StartsWith("DRIVE|") ? tag.Split('|')[1] : Path.Combine(txtLocal.Text, item.Text));
                 }
+
+                await Task.Run(() => {
+                    foreach (string p in selectedPaths) {
+                        try {
+                            if (File.Exists(p)) { File.SetAttributes(p, FileAttributes.Normal); File.Delete(p); }
+                            else if (Directory.Exists(p)) Directory.Delete(p, true);
+                        } catch (Exception ex) { 
+                            SafeInvoke(() => MessageBox.Show("Failed to delete " + p + ": " + ex.Message));
+                        }
+                    }
+                });
                 RefreshLocalList(txtLocal.Text);
             }
         }
@@ -741,9 +749,13 @@ namespace FileTransferApp
                                 sb.Append(p).Append(";");
                             }
                             await SendCommandAsync(ns, "TASK_REMOTE_DELETE|" + sb.ToString());
+                            
+                            // Wait for acknowledgment from remote side
+                            string reply = await ReadCommandAsync(ns);
+                            if (reply != "OK") throw new Exception("Remote delete failed or timed out.");
                         }
                     }
-                    await Task.Delay(500); RefreshRemoteList();
+                    RefreshRemoteList();
                 } catch (Exception ex) { MessageBox.Show("Remote delete error: " + ex.Message); }
             }
         }
@@ -1280,7 +1292,12 @@ namespace FileTransferApp
                                 }
                             });
                         }
-                        else if (cmd == "TASK_REMOTE_DELETE") { string[] paths = parts[1].Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries); foreach(var p in paths) { try { if (File.Exists(p)) { File.SetAttributes(p, FileAttributes.Normal); File.Delete(p); } else if (Directory.Exists(p)) Directory.Delete(p, true); } catch {} } SafeInvoke(() => RefreshLocalList(txtLocal.Text)); }
+                        else if (cmd == "TASK_REMOTE_DELETE") { 
+                            string[] paths = parts[1].Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries); 
+                            foreach(var p in paths) { try { if (File.Exists(p)) { File.SetAttributes(p, FileAttributes.Normal); File.Delete(p); } else if (Directory.Exists(p)) Directory.Delete(p, true); } catch {} } 
+                            SafeInvoke(() => RefreshLocalList(txtLocal.Text));
+                            await SendCommandAsync(ns, "OK");
+                        }
                         else if (cmd == "TASK_PULL") { int cp = int.Parse(parts[1]); string ld = parts[2]; string[] rp = parts[3].Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries); string ci = ((IPEndPoint)client.Client.RemoteEndPoint).Address.ToString(); string bd = Path.GetDirectoryName(rp[0]); ProcessOutgoingItems(ci, cp, rp, bd, ld); }
                         else if (cmd == "PUSH") {
                             string destPath = parts[1]; long fs = long.Parse(parts[2]); string tId = parts.Length > 3 ? parts[3] : "";
