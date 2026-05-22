@@ -13,11 +13,15 @@ using System.Diagnostics;
 using Microsoft.Win32;
 using System.Runtime.InteropServices;
 using System.Runtime;
+using System.IO.MemoryMappedFiles;
 
 namespace FileTransferApp
 {
     public class SwiftShare : Form
     {
+        [DllImport("kernel32.dll")]
+        public static extern uint GetCurrentThreadId();
+
         private const int UdpPort = 8888;
         private const string MulticastIp = "239.255.255.250";
         private string instanceId = Guid.NewGuid().ToString();
@@ -114,7 +118,7 @@ namespace FileTransferApp
         static void Main()
         {
             try {
-                Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.High;
+                Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.RealTime;
                 GCSettings.LatencyMode = GCLatencyMode.SustainedLowLatency;
             } catch {}
             
@@ -881,50 +885,60 @@ namespace FileTransferApp
             }
             task.LocalBaseDir = baseDir; SafeInvoke(() => { CreateTaskCard(task); });
             try { using (TcpClient client = new TcpClient()) { await client.ConnectAsync(ip, port); using (NetworkStream ns = client.GetStream()) { await SendCommandAsync(ns, "TASK_START|" + task.TaskName + "|" + task.TotalBytes + "|" + task.Files.Count + "|" + task.TaskId + "|" + actualTcpPort); } } } catch { task.CompleteTask("Failed to start"); return; }
-            long totalSent = 0; Stopwatch sw = new Stopwatch(); sw.Start();
+            
+            Stopwatch sw = new Stopwatch(); sw.Start();
             foreach (var item in task.Files) {
-                if (task.IsCancelled) break; while (task.IsPaused && !task.IsCancelled) await Task.Delay(200);
-                try {
-                    using (TcpClient client = new TcpClient()) {
-                        client.NoDelay = true;
-                        client.SendBufferSize = 8388608;
-                        client.ReceiveBufferSize = 8388608;
-                        await client.ConnectAsync(ip, port);
-                        using (NetworkStream ns = client.GetStream()) {
-                            await SendCommandAsync(ns, "PUSH|" + item.RelativePath + "|" + item.TotalSize + "|" + task.TaskId);
-                        using (FileStream fs = new FileStream(item.LocalPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4194304, FileOptions.SequentialScan | FileOptions.Asynchronous)) { 
-                            byte[] buf1 = new byte[2097152]; 
-                            byte[] buf2 = new byte[2097152]; 
-                            byte[] readBuf = buf1;
-                            byte[] writeBuf = buf2;
-                            Task writeTask = Task.Delay(0);
-                            
-                            int r = await fs.ReadAsync(readBuf, 0, readBuf.Length);
-                            while (r > 0) { 
-                                if (task.IsCancelled) break; 
-                                while (task.IsPaused && !task.IsCancelled) await Task.Delay(200); 
-                                await writeTask;
-                                
-                                byte[] temp = readBuf; readBuf = writeBuf; writeBuf = temp;
-                                int bytesToWrite = r;
-                                writeTask = ns.WriteAsync(writeBuf, 0, bytesToWrite);
-                                
-                                totalSent += r; 
-                                item.TransferredBytes += r; 
-                                double speed = (totalSent / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001); 
-                                task.UpdateProgress(totalSent, speed); 
-                                
-                                r = await fs.ReadAsync(readBuf, 0, readBuf.Length);
-                            } 
-                            await writeTask;
-                        }
-
-                        }
+                if (task.IsCancelled) break;
+                
+                int workerCount = Math.Min(32, Environment.ProcessorCount * 2);
+                long segmentSize = item.TotalSize / workerCount;
+                Task[] workers = new Task[workerCount];
+                
+                // Extreme 400GbE Optimization: Memory Mapped I/O for Sender
+                using (MemoryMappedFile mmf = MemoryMappedFile.CreateFromFile(item.LocalPath, FileMode.Open, null, 0, MemoryMappedFileAccess.Read)) {
+                    for (int i = 0; i < workerCount; i++) {
+                        int workerIndex = i;
+                        long startOffset = i * segmentSize;
+                        long length = (i == workerCount - 1) ? (item.TotalSize - startOffset) : segmentSize;
+                        if (length <= 0) { workers[i] = Task.Delay(0); continue; }
+                        
+                        workers[workerIndex] = Task.Run(async () => {
+                            System.Threading.Thread.CurrentThread.Priority = System.Threading.ThreadPriority.Highest;
+                            try {
+                                using (TcpClient client = new TcpClient()) {
+                                    client.NoDelay = true;
+                                    client.SendBufferSize = 33554432; // 32MB Buffer
+                                    client.ReceiveBufferSize = 33554432;
+                                    await client.ConnectAsync(ip, port);
+                                    using (NetworkStream ns = client.GetStream()) {
+                                        await SendCommandAsync(ns, "PUSH|" + item.RelativePath + "|" + item.TotalSize + "|" + task.TaskId + "|" + startOffset + "|" + length);
+                                        
+                                        using (MemoryMappedViewStream segmentStream = mmf.CreateViewStream(startOffset, length, MemoryMappedFileAccess.Read)) {
+                                            byte[] buf = new byte[8388608]; // 8MB read block
+                                            int r;
+                                            while ((r = await segmentStream.ReadAsync(buf, 0, buf.Length)) > 0) {
+                                                if (task.IsCancelled) break;
+                                                while (task.IsPaused && !task.IsCancelled) await Task.Delay(100);
+                                                
+                                                await ns.WriteAsync(buf, 0, r);
+                                                
+                                                System.Threading.Interlocked.Add(ref task.transferredBytesBacking, r);
+                                                System.Threading.Interlocked.Add(ref item.transferredBytesBacking, r);
+                                                
+                                                double spd = (task.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001);
+                                                task.UpdateProgress(task.TransferredBytes, spd);
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch { task.CompleteTask("Error in 400G Stream"); }
+                        });
                     }
-                } catch { task.CompleteTask("Error"); }
+                    await Task.WhenAll(workers);
+                }
             }
             task.CompleteTask(task.IsCancelled ? "Cancelled" : "Completed");
-            if (!task.IsCancelled) { try { using (TcpClient client = new TcpClient()) { await client.ConnectAsync(ip, port); using (NetworkStream ns = client.GetStream()) { await SendCommandAsync(ns, "TASK_END"); } } } catch { } }
+            if (!task.IsCancelled) { try { using (TcpClient client = new TcpClient()) { await client.ConnectAsync(ip, port); using (NetworkStream ns = client.GetStream()) { await SendCommandAsync(ns, "TASK_END|" + task.TaskId); } } } catch { } }
             SafeInvoke(() => { RefreshRemoteList(); });
         }
 
@@ -1038,11 +1052,12 @@ namespace FileTransferApp
         private async Task HandleIncomingConnection(TcpClient client)
         {
             client.NoDelay = true;
-            client.ReceiveBufferSize = 8388608;
-            client.SendBufferSize = 8388608;
+            client.ReceiveBufferSize = 33554432; // 32MB for 400GbE
+            client.SendBufferSize = 33554432;
             Stopwatch sw = new Stopwatch();
             TransferTask taskContext = null;
             try {
+                System.Threading.Thread.CurrentThread.Priority = System.Threading.ThreadPriority.Highest;
                 using (NetworkStream ns = client.GetStream()) {
                     string cmdStr = await ReadCommandAsync(ns); string[] parts = cmdStr.Split('|'); string cmd = parts[0];
                     if (cmd == "LIST") {
@@ -1089,48 +1104,50 @@ namespace FileTransferApp
                     else if (cmd == "TASK_PULL") { int cp = int.Parse(parts[1]); string ld = parts[2]; string[] rp = parts[3].Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries); string ci = ((IPEndPoint)client.Client.RemoteEndPoint).Address.ToString(); string bd = Path.GetDirectoryName(rp[0]); ProcessOutgoingItems(ci, cp, rp, bd, ld); }
                     else if (cmd == "PUSH") {
                         string relPath = parts[1]; long fs = long.Parse(parts[2]); string tId = parts.Length > 3 ? parts[3] : "";
+                        long offset = parts.Length > 4 ? long.Parse(parts[4]) : 0;
+                        long segmentLen = parts.Length > 5 ? long.Parse(parts[5]) : fs;
+                        
                         lock(activeInTasks) { if (activeInTasks.ContainsKey(tId)) taskContext = activeInTasks[tId]; }
-                        TransferItem item = new TransferItem { RelativePath = relPath, TotalSize = fs, LocalPath = "", DestinationPath = relPath }; 
-                        if (taskContext != null) { taskContext.Files.Add(item); if (string.IsNullOrEmpty(taskContext.LocalBaseDir)) taskContext.LocalBaseDir = Path.GetDirectoryName(relPath); }
+                        TransferItem item = null;
+                        if (taskContext != null) {
+                            lock(taskContext.Files) {
+                                foreach(var f in taskContext.Files) { if (f.RelativePath == relPath) { item = f; break; } }
+                                if (item == null) {
+                                    item = new TransferItem { RelativePath = relPath, TotalSize = fs, LocalPath = "", DestinationPath = relPath };
+                                    taskContext.Files.Add(item);
+                                }
+                            }
+                        }
+                        
                         string saveDir = Path.GetDirectoryName(relPath); if (!Directory.Exists(saveDir)) Directory.CreateDirectory(saveDir);
                         sw.Start();
-                        using (FileStream fstream = new FileStream(relPath, FileMode.Create, FileAccess.Write, FileShare.None, 8388608, FileOptions.SequentialScan | FileOptions.Asynchronous)) { 
-                            if (fs > 0) fstream.SetLength(fs);
-                            int chunkSize = 8388608;
-                            byte[] buf1 = new byte[chunkSize]; 
-                            byte[] buf2 = new byte[chunkSize]; 
-                            byte[] readBuf = buf1;
-                            byte[] writeBuf = buf2;
-                            long total = 0; 
-                            Task writeTask = Task.Delay(0);
-                            
-                            while (total < fs) {
-                                if (taskContext != null) { if (taskContext.IsCancelled) break; while (taskContext.IsPaused && !taskContext.IsCancelled) await Task.Delay(200); } 
+                        
+                        // Extreme 400GbE Optimization: Memory Mapped I/O for Receiver
+                        using (MemoryMappedFile mmf = MemoryMappedFile.CreateFromFile(relPath, FileMode.OpenOrCreate, null, fs, MemoryMappedFileAccess.ReadWrite))
+                        using (MemoryMappedViewAccessor accessor = mmf.CreateViewAccessor(offset, segmentLen)) {
+                            byte[] buf = new byte[8388608]; // 8MB buffer for full filling
+                            long receivedInSegment = 0;
+                            while (receivedInSegment < segmentLen) {
+                                if (taskContext != null) { if (taskContext.IsCancelled) break; while (taskContext.IsPaused && !taskContext.IsCancelled) await Task.Delay(100); }
                                 
-                                int toReadTotal = (int)Math.Min((long)chunkSize, fs - total);
-                                int bytesReadInChunk = 0;
-                                
-                                while (bytesReadInChunk < toReadTotal) {
-                                    int r = await ns.ReadAsync(readBuf, bytesReadInChunk, toReadTotal - bytesReadInChunk);
+                                int toRead = (int)Math.Min((long)buf.Length, segmentLen - receivedInSegment);
+                                int bytesReadThisLoop = 0;
+                                while(bytesReadThisLoop < toRead) {
+                                    int r = await ns.ReadAsync(buf, bytesReadThisLoop, toRead - bytesReadThisLoop);
                                     if (r == 0) break;
-                                    bytesReadInChunk += r;
+                                    bytesReadThisLoop += r;
                                 }
-                                if (bytesReadInChunk == 0) break;
-
-                                await writeTask;
+                                if (bytesReadThisLoop == 0) break;
                                 
-                                byte[] temp = readBuf; readBuf = writeBuf; writeBuf = temp;
-                                writeTask = fstream.WriteAsync(writeBuf, 0, bytesReadInChunk);
-                                
-                                total += bytesReadInChunk; 
-                                if (taskContext != null) { 
-                                    taskContext.TransferredBytes += bytesReadInChunk; 
-                                    item.TransferredBytes += bytesReadInChunk; 
-                                    double speed = (taskContext.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001); 
-                                    taskContext.UpdateProgress(taskContext.TransferredBytes, speed); 
-                                } 
-                            } 
-                            await writeTask;
+                                accessor.WriteArray(receivedInSegment, buf, 0, bytesReadThisLoop);
+                                receivedInSegment += bytesReadThisLoop;
+                                if (taskContext != null) {
+                                    System.Threading.Interlocked.Add(ref taskContext.transferredBytesBacking, bytesReadThisLoop);
+                                    if (item != null) System.Threading.Interlocked.Add(ref item.transferredBytesBacking, bytesReadThisLoop);
+                                    double speed = (taskContext.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001);
+                                    taskContext.UpdateProgress(taskContext.TransferredBytes, speed);
+                                }
+                            }
                         }
                         SafeInvoke(() => { RefreshLocalList(txtLocal.Text); });
                     }
@@ -1335,15 +1352,24 @@ namespace FileTransferApp
 
     public class CustomColorTable : ProfessionalColorTable
  { public override Color MenuStripGradientBegin { get { return Color.FromArgb(45, 45, 45); } } public override Color MenuStripGradientEnd { get { return Color.FromArgb(45, 45, 45); } } public override Color MenuItemSelected { get { return Color.FromArgb(60, 60, 60); } } public override Color MenuItemSelectedGradientBegin { get { return Color.FromArgb(60, 60, 60); } } public override Color MenuItemSelectedGradientEnd { get { return Color.FromArgb(60, 60, 60); } } public override Color MenuItemPressedGradientBegin { get { return Color.FromArgb(70, 70, 70); } } public override Color MenuItemPressedGradientEnd { get { return Color.FromArgb(70, 70, 70); } } public override Color MenuItemBorder { get { return Color.Transparent; } } public override Color MenuBorder { get { return Color.FromArgb(30, 30, 30); } } public override Color ToolStripDropDownBackground { get { return Color.FromArgb(30, 30, 30); } } public override Color SeparatorDark { get { return Color.FromArgb(80, 80, 80); } } public override Color ImageMarginGradientBegin { get { return Color.FromArgb(30, 30, 30); } } public override Color ImageMarginGradientMiddle { get { return Color.FromArgb(30, 30, 30); } } public override Color ImageMarginGradientEnd { get { return Color.FromArgb(30, 30, 30); } } }
-    public class TransferItem { public string LocalPath { get; set; } public string RelativePath { get; set; } public string DestinationPath { get; set; } public long TotalSize { get; set; } public long TransferredBytes { get; set; } public TreeNode NodeRef { get; set; } }
     public class TransferTask {
         public string TaskId { get; set; }
-        public string TaskName { get; set; } public string Direction { get; set; } public long TotalBytes { get; set; } public long TransferredBytes { get; set; } public bool IsPaused { get; set; } public bool IsCancelled { get; set; } public List<TransferItem> Files { get; set; } public string LocalBaseDir { get; set; } public string RemoteIP { get; set; } public int RemotePort { get; set; }
+        public string TaskName { get; set; } public string Direction { get; set; } public long TotalBytes { get; set; } 
+        public long TransferredBytes { get { return System.Threading.Interlocked.Read(ref transferredBytesBacking); } }
+        public long transferredBytesBacking; 
+        public bool IsPaused { get; set; } public bool IsCancelled { get; set; } public List<TransferItem> Files { get; set; } public string LocalBaseDir { get; set; } public string RemoteIP { get; set; } public int RemotePort { get; set; }
         public Panel Card { get; set; } public ProgressBar Progress { get; set; } public Label StatusLbl { get; set; } public Label SpeedLbl { get; set; } public Button PauseBtn { get; set; } public Button CancelBtn { get; set; } public Button OpenBtn { get; set; } public Button DeleteBtn { get; set; } public Button RemoveBtn { get; set; } public TreeView FileTree { get; set; } public Panel TreePanel { get; set; }
+        private long lastUiUpdateTicks = 0;
         public TransferTask() { Files = new List<TransferItem>(); TaskId = Guid.NewGuid().ToString(); }
-        public void UpdateProgress(long totalCurrent, double speedMBs) { TransferredBytes = totalCurrent; if (Card != null && !Card.IsDisposed) { Card.BeginInvoke(new MethodInvoker(delegate { if (Progress != null) { int p = (int)((TransferredBytes * 100) / (TotalBytes > 0 ? TotalBytes : 1)); Progress.Value = Math.Min(100, p); } if (SpeedLbl != null) SpeedLbl.Text = speedMBs.ToString("F1") + " MB/s"; UpdateTreeNodes(); })); } }
-        private void UpdateTreeNodes() { if (FileTree == null) return; foreach (var item in Files) { if (item.NodeRef != null) { int p = (int)((item.TransferredBytes * 100) / (item.TotalSize > 0 ? item.TotalSize : 1)); string newText = Path.GetFileName(item.RelativePath) + " [" + p + "%]"; if (item.NodeRef.Text != newText) item.NodeRef.Text = newText; UpdateParentNode(item.NodeRef.Parent); } } }
+        public void UpdateProgress(long totalCurrent, double speedMBs) { 
+            long currentTicks = DateTime.UtcNow.Ticks;
+            if (currentTicks - lastUiUpdateTicks < 1000000 && totalCurrent < TotalBytes) return; // Throttle to 10Hz
+            lastUiUpdateTicks = currentTicks;
+            if (Card != null && !Card.IsDisposed) { Card.BeginInvoke(new MethodInvoker(delegate { if (Progress != null) { int p = (int)((totalCurrent * 100) / (TotalBytes > 0 ? TotalBytes : 1)); Progress.Value = Math.Min(100, p); } if (SpeedLbl != null) SpeedLbl.Text = speedMBs.ToString("F1") + " MB/s"; UpdateTreeNodes(); })); } 
+        }
+        private void UpdateTreeNodes() { if (FileTree == null) return; lock(Files) { foreach (var item in Files) { if (item.NodeRef != null) { int p = (int)((item.TransferredBytes * 100) / (item.TotalSize > 0 ? item.TotalSize : 1)); string newText = Path.GetFileName(item.RelativePath) + " [" + p + "%]"; if (item.NodeRef.Text != newText) item.NodeRef.Text = newText; UpdateParentNode(item.NodeRef.Parent); } } } }
         private void UpdateParentNode(TreeNode parent) { if (parent == null) return; double totalP = 0; foreach (TreeNode child in parent.Nodes) { string txt = child.Text; int start = txt.LastIndexOf('['); int end = txt.LastIndexOf('%'); if (start >= 0 && end > start) { double p; if (double.TryParse(txt.Substring(start + 1, end - start - 1), out p)) totalP += p; } } int avgP = (int)(totalP / (parent.Nodes.Count > 0 ? parent.Nodes.Count : 1)); string cleanName = parent.Text.Split('[')[0].Trim(); parent.Text = cleanName + " [" + avgP + "%]"; UpdateParentNode(parent.Parent); }
         public void CompleteTask(string status) { if (Card != null && !Card.IsDisposed) { Card.BeginInvoke(new MethodInvoker(delegate { if (StatusLbl != null) StatusLbl.Text = "Status: " + status; if (PauseBtn != null) PauseBtn.Visible = false; if (CancelBtn != null) CancelBtn.Visible = false; if (OpenBtn != null) OpenBtn.Visible = (status == "Completed"); if (DeleteBtn != null) DeleteBtn.Visible = (status == "Completed"); if (RemoveBtn != null) RemoveBtn.Visible = true; if (Progress != null) Progress.Value = 100; if (SpeedLbl != null) SpeedLbl.Text = "---"; UpdateTreeNodes(); })); } }
     }
+    public class TransferItem { public string LocalPath { get; set; } public string RelativePath { get; set; } public string DestinationPath { get; set; } public long TotalSize { get; set; } public long TransferredBytes { get { return System.Threading.Interlocked.Read(ref transferredBytesBacking); } } public long transferredBytesBacking; public TreeNode NodeRef { get; set; } }
 }
