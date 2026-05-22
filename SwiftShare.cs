@@ -451,6 +451,20 @@ namespace FileTransferApp
             imageList.ImageSize = new Size(16, 16);
             lvLocal.SmallImageList = imageList;
             lvRemote.SmallImageList = imageList;
+
+            lvLocal.ColumnClick += (s, e) => SortListView(lvLocal, e.Column);
+            lvRemote.ColumnClick += (s, e) => SortListView(lvRemote, e.Column);
+        }
+
+        private void SortListView(ListView lv, int column)
+        {
+            ListViewItemComparer sorter = lv.ListViewItemSorter as ListViewItemComparer;
+            if (sorter != null && sorter.Column == column) {
+                sorter.Order = (sorter.Order == SortOrder.Ascending) ? SortOrder.Descending : SortOrder.Ascending;
+            } else {
+                lv.ListViewItemSorter = new ListViewItemComparer(column, SortOrder.Ascending);
+            }
+            lv.Sort();
         }
 
         private int GetIconIndex(string path, bool isFolder, bool useAttributes = true)
@@ -841,7 +855,41 @@ namespace FileTransferApp
     }
 
     public class DarkRenderer : ToolStripProfessionalRenderer { public DarkRenderer() : base(new CustomColorTable()) { } protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e) { e.TextColor = Color.White; base.OnRenderItemText(e); } }
-    public class CustomColorTable : ProfessionalColorTable { public override Color MenuStripGradientBegin { get { return Color.FromArgb(45, 45, 45); } } public override Color MenuStripGradientEnd { get { return Color.FromArgb(45, 45, 45); } } public override Color MenuItemSelected { get { return Color.FromArgb(60, 60, 60); } } public override Color MenuItemSelectedGradientBegin { get { return Color.FromArgb(60, 60, 60); } } public override Color MenuItemSelectedGradientEnd { get { return Color.FromArgb(60, 60, 60); } } public override Color MenuItemPressedGradientBegin { get { return Color.FromArgb(70, 70, 70); } } public override Color MenuItemPressedGradientEnd { get { return Color.FromArgb(70, 70, 70); } } public override Color MenuItemBorder { get { return Color.Transparent; } } public override Color MenuBorder { get { return Color.FromArgb(30, 30, 30); } } public override Color ToolStripDropDownBackground { get { return Color.FromArgb(30, 30, 30); } } public override Color SeparatorDark { get { return Color.FromArgb(80, 80, 80); } } public override Color ImageMarginGradientBegin { get { return Color.FromArgb(30, 30, 30); } } public override Color ImageMarginGradientMiddle { get { return Color.FromArgb(30, 30, 30); } } public override Color ImageMarginGradientEnd { get { return Color.FromArgb(30, 30, 30); } } }
+
+    public class ListViewItemComparer : System.Collections.IComparer
+    {
+        public int Column { get; set; }
+        public SortOrder Order { get; set; }
+        public ListViewItemComparer(int column, SortOrder order) { Column = column; Order = order; }
+        public int Compare(object x, object y)
+        {
+            ListViewItem itemX = (ListViewItem)x; ListViewItem itemY = (ListViewItem)y;
+            if (itemX.Tag.ToString() == "UP") return -1; if (itemY.Tag.ToString() == "UP") return 1;
+            int result;
+            if (Column == 1) { // Size
+                long sizeX = ParseSize(itemX.SubItems[1].Text); long sizeY = ParseSize(itemY.SubItems[1].Text);
+                result = sizeX.CompareTo(sizeY);
+            } else {
+                result = string.Compare(itemX.SubItems[Column].Text, itemY.SubItems[Column].Text);
+            }
+            return (Order == SortOrder.Descending) ? -result : result;
+        }
+        private long ParseSize(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return -1;
+            string[] parts = text.Split(' '); if (parts.Length < 2) return 0;
+            double val; if (!double.TryParse(parts[0], out val)) return 0;
+            switch (parts[1]) {
+                case "KB": return (long)(val * 1024);
+                case "MB": return (long)(val * 1024 * 1024);
+                case "GB": return (long)(val * 1024 * 1024 * 1024);
+                default: return (long)val;
+            }
+        }
+    }
+
+    public class CustomColorTable : ProfessionalColorTable
+ { public override Color MenuStripGradientBegin { get { return Color.FromArgb(45, 45, 45); } } public override Color MenuStripGradientEnd { get { return Color.FromArgb(45, 45, 45); } } public override Color MenuItemSelected { get { return Color.FromArgb(60, 60, 60); } } public override Color MenuItemSelectedGradientBegin { get { return Color.FromArgb(60, 60, 60); } } public override Color MenuItemSelectedGradientEnd { get { return Color.FromArgb(60, 60, 60); } } public override Color MenuItemPressedGradientBegin { get { return Color.FromArgb(70, 70, 70); } } public override Color MenuItemPressedGradientEnd { get { return Color.FromArgb(70, 70, 70); } } public override Color MenuItemBorder { get { return Color.Transparent; } } public override Color MenuBorder { get { return Color.FromArgb(30, 30, 30); } } public override Color ToolStripDropDownBackground { get { return Color.FromArgb(30, 30, 30); } } public override Color SeparatorDark { get { return Color.FromArgb(80, 80, 80); } } public override Color ImageMarginGradientBegin { get { return Color.FromArgb(30, 30, 30); } } public override Color ImageMarginGradientMiddle { get { return Color.FromArgb(30, 30, 30); } } public override Color ImageMarginGradientEnd { get { return Color.FromArgb(30, 30, 30); } } }
     public class TransferItem { public string LocalPath { get; set; } public string RelativePath { get; set; } public string DestinationPath { get; set; } public long TotalSize { get; set; } public long TransferredBytes { get; set; } public TreeNode NodeRef { get; set; } }
     public class TransferTask {
         public string TaskName { get; set; } public string Direction { get; set; } public long TotalBytes { get; set; } public long TransferredBytes { get; set; } public bool IsPaused { get; set; } public bool IsCancelled { get; set; } public List<TransferItem> Files { get; set; } public string LocalBaseDir { get; set; } public string RemoteIP { get; set; } public int RemotePort { get; set; }
