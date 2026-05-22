@@ -919,7 +919,7 @@ namespace FileTransferApp
         private void PopulateTaskTree(TransferTask task)
         {
             Panel pnl = new Panel { Location = new Point(10, 75), Size = new Size(task.Card.ClientSize.Width - 20, 160), BorderStyle = BorderStyle.None, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right };
-            TreeView tv = new TreeView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, Font = new Font("Segoe UI", 9), ImageList = imageList };
+            TransparentTreeView tv = new TransparentTreeView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, Font = new Font("Segoe UI", 9), ImageList = imageList };
             tv.MouseEnter += (s, e) => tv.Focus();
             task.TreePanel = pnl; task.FileTree = tv; pnl.Controls.Add(tv); task.Card.Controls.Add(pnl);
             foreach (var file in task.Files) {
@@ -1005,6 +1005,28 @@ namespace FileTransferApp
         private async void PeerCleanupLoop() { while (true) { await Task.Delay(3000); SafeInvoke(() => { List<string> toRemove = new List<string>(); foreach (var kvp in peerLastSeen) { if ((DateTime.Now - kvp.Value).TotalSeconds > 10) toRemove.Add(kvp.Key); } foreach (string key in toRemove) { peerLastSeen.Remove(key); for (int i = peerList.Items.Count - 1; i >= 0; i--) { if (peerList.Items[i].ToString().StartsWith(key)) peerList.Items.RemoveAt(i); } if (currentRemotePeer == key) { currentRemotePeer = ""; lvRemote.Items.Clear(); txtRemote.Text = "Peer Disconnected"; } } }); } }
 
         private void SafeInvoke(Action action) { if (this.IsHandleCreated && !this.IsDisposed) { if (this.InvokeRequired) this.Invoke(action); else action(); } }
+    }
+
+    public class TransparentTreeView : TreeView
+    {
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == 0x020A) // WM_MOUSEWHEEL
+            {
+                Control parent = this.Parent;
+                while (parent != null && !(parent is FlowLayoutPanel)) {
+                    parent = parent.Parent;
+                }
+                if (parent != null) {
+                    SendMessage(parent.Handle, m.Msg, m.WParam, m.LParam);
+                    m.Result = IntPtr.Zero;
+                    return;
+                }
+            }
+            base.WndProc(ref m);
+        }
+        [DllImport("user32.dll")]
+        public static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wp, IntPtr lp);
     }
 
     public class DarkRenderer : ToolStripProfessionalRenderer { public DarkRenderer() : base(new CustomColorTable()) { } protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e) { e.TextColor = Color.White; base.OnRenderItemText(e); } }
