@@ -918,7 +918,9 @@ namespace FileTransferApp
                         foreach (string path in paths) {
                             if (task.IsCancelled) break;
                             if (File.Exists(path)) {
-                                await StreamSingleFilePersistent(ns, path, Path.Combine(remoteDestDir, Path.GetFileName(path)), task, sw);
+                                string finalRelPath = Path.Combine(remoteDestDir, Path.GetFileName(path)).Replace("\\", "/");
+                                task.Files.Add(new TransferItem { RelativePath = finalRelPath, TotalSize = new FileInfo(path).Length });
+                                await StreamSingleFilePersistent(ns, path, finalRelPath, task, sw);
                                 processedItems++;
                                 task.ProcessedItems = processedItems;
                                 task.UpdateProgress(task.TransferredBytes, (task.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001));
