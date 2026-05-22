@@ -1375,11 +1375,12 @@ namespace FileTransferApp
         public string TaskName { get; set; } public string Direction { get; set; } public long TotalBytes { get; set; } 
         public long TransferredBytes { get { return System.Threading.Interlocked.Read(ref transferredBytesBacking); } }
         public long transferredBytesBacking; 
+        public Stopwatch TransferSw { get; set; }
         public bool IsPaused { get; set; } public bool IsCancelled { get; set; } public bool IsCompleted { get; set; }
         public List<TransferItem> Files { get; set; } public string LocalBaseDir { get; set; } public string RemoteIP { get; set; } public int RemotePort { get; set; }
         public Panel Card { get; set; } public ProgressBar Progress { get; set; } public Label StatusLbl { get; set; } public Label SpeedLbl { get; set; } public Button PauseBtn { get; set; } public Button CancelBtn { get; set; } public Button OpenBtn { get; set; } public Button DeleteBtn { get; set; } public Button RemoveBtn { get; set; } public TreeView FileTree { get; set; } public Panel TreePanel { get; set; }
         private long lastUiUpdateTicks = 0;
-        public TransferTask() { Files = new List<TransferItem>(); TaskId = Guid.NewGuid().ToString(); }
+        public TransferTask() { Files = new List<TransferItem>(); TaskId = Guid.NewGuid().ToString(); TransferSw = new Stopwatch(); }
         public void UpdateProgress(long totalCurrent, double speedMBs) { 
             if (IsCompleted) return;
             long currentTicks = DateTime.UtcNow.Ticks;
@@ -1387,6 +1388,7 @@ namespace FileTransferApp
             lastUiUpdateTicks = currentTicks;
             if (Card != null && !Card.IsDisposed) { 
                 Card.BeginInvoke(new MethodInvoker(delegate { 
+                    if (StatusLbl != null && StatusLbl.Text.Contains("Waiting")) StatusLbl.Text = "Status: Transferring...";
                     if (Progress != null) { 
                         int p = 0;
                         if (TotalBytes > 0) {
