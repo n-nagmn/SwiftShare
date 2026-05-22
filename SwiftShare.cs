@@ -835,7 +835,7 @@ namespace FileTransferApp
                 else if (Directory.Exists(path)) { string rootDir = Path.GetDirectoryName(path); if (!rootDir.EndsWith(Path.DirectorySeparatorChar.ToString())) rootDir += Path.DirectorySeparatorChar; foreach (string file in Directory.GetFiles(path, "*", SearchOption.AllDirectories)) { string relPath = file.Substring(rootDir.Length).Replace("\\", "/"); string finalRelPath = Path.Combine(remoteDestDir, relPath); task.Files.Add(new TransferItem { LocalPath = file, RelativePath = finalRelPath, TotalSize = new FileInfo(file).Length, DestinationPath = finalRelPath }); task.TotalBytes += new FileInfo(file).Length; } }
             }
             task.LocalBaseDir = baseDir; SafeInvoke(() => { CreateTaskCard(task); });
-            try { using (TcpClient client = new TcpClient()) { await client.ConnectAsync(ip, port); using (NetworkStream ns = client.GetStream()) { await SendCommandAsync(ns, "TASK_START|" + task.TaskName + "|" + task.TotalBytes + "|" + task.Files.Count); } } } catch { task.CompleteTask("Failed to start"); return; }
+            try { using (TcpClient client = new TcpClient()) { await client.ConnectAsync(ip, port); using (NetworkStream ns = client.GetStream()) { await SendCommandAsync(ns, "TASK_START|" + task.TaskName + "|" + task.TotalBytes + "|" + task.Files.Count + "|" + task.TaskId + "|" + actualTcpPort); } } } catch { task.CompleteTask("Failed to start"); return; }
             long totalSent = 0; Stopwatch sw = new Stopwatch(); sw.Start();
             foreach (var item in task.Files) {
                 if (task.IsCancelled) break; while (task.IsPaused && !task.IsCancelled) await Task.Delay(200);
@@ -881,7 +881,7 @@ namespace FileTransferApp
             openBtn.Click += (s, e) => { try { if (Directory.Exists(task.LocalBaseDir)) Process.Start("explorer.exe", task.LocalBaseDir); } catch {} };
             task.OpenBtn = openBtn; card.Controls.Add(openBtn);
             deleteBtn.Click += async (s, e) => {
-                if (MessageBox.Show("Delete transferred files from disk?", "Confirm", MessageBoxButtons.YesNo) == DialogResult.Yes) {
+                if (MessageBox.Show("Delete transferred files from disk and remove history on both sides?", "Confirm", MessageBoxButtons.YesNo) == DialogResult.Yes) {
                     try {
                         if (task.Direction == "IN") {
                             foreach (var f in task.Files) {
@@ -891,24 +891,36 @@ namespace FileTransferApp
                             }
                             await Task.Delay(500); 
                             SafeInvoke(() => RefreshLocalList(txtLocal.Text)); 
-                        } else { 
-                            using (TcpClient client = new TcpClient()) { 
-                                await client.ConnectAsync(task.RemoteIP, task.RemotePort); 
-                                using (NetworkStream ns = client.GetStream()) { 
-                                    StringBuilder sb = new StringBuilder(); 
-                                    foreach(var f in task.Files) sb.Append(f.DestinationPath).Append(";"); 
-                                    await SendCommandAsync(ns, "TASK_REMOTE_DELETE|" + sb.ToString()); 
-                                } 
-                            } 
-                            await Task.Delay(800); 
-                            SafeInvoke(() => RefreshRemoteList()); 
                         } 
+                        try {
+                            if (task.RemotePort > 0) {
+                                using (TcpClient client = new TcpClient()) { 
+                                    await client.ConnectAsync(task.RemoteIP, task.RemotePort); 
+                                    using (NetworkStream ns = client.GetStream()) { 
+                                        await SendCommandAsync(ns, "SYNC_REMOVE_TASK|" + task.TaskId + "|1"); 
+                                    } 
+                                } 
+                            }
+                            if (task.Direction == "OUT") { await Task.Delay(800); SafeInvoke(() => RefreshRemoteList()); }
+                        } catch {}
                         historyFlow.Controls.Remove(card); card.Dispose(); 
                     } catch (Exception ex) { MessageBox.Show("Error: " + ex.Message); }
                 }
             };
             task.DeleteBtn = deleteBtn; card.Controls.Add(deleteBtn);
-            removeBtn.Click += (s, e) => { historyFlow.Controls.Remove(card); card.Dispose(); };
+            removeBtn.Click += async (s, e) => { 
+                try {
+                    if (task.RemotePort > 0) {
+                        using (TcpClient client = new TcpClient()) { 
+                            await client.ConnectAsync(task.RemoteIP, task.RemotePort); 
+                            using (NetworkStream ns = client.GetStream()) { 
+                                await SendCommandAsync(ns, "SYNC_REMOVE_TASK|" + task.TaskId + "|0"); 
+                            } 
+                        } 
+                    }
+                } catch {}
+                historyFlow.Controls.Remove(card); card.Dispose(); 
+            };
             task.RemoveBtn = removeBtn; card.Controls.Add(removeBtn);
             expandBtn.Click += (s, e) => { if (card.Height == 70) { card.Height = 250; expandBtn.Text = "Files ▲"; if (task.TreePanel == null) PopulateTaskTree(task); } else { card.Height = 70; expandBtn.Text = "Files ▼"; } };
             card.Controls.Add(expandBtn);
@@ -966,8 +978,25 @@ namespace FileTransferApp
                         else if (Directory.Exists(reqPath)) { foreach (FileSystemInfo fsi in new DirectoryInfo(reqPath).GetFileSystemInfos()) { try { if ((fsi.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden) continue; string typeName = GetTypeName(fsi.FullName, fsi is DirectoryInfo); if (fsi is DirectoryInfo) sb.AppendLine("D|" + fsi.Name + "||" + fsi.LastWriteTime.Ticks + "|" + typeName); else sb.AppendLine("F|" + fsi.Name + "|" + ((FileInfo)fsi).Length + "|" + fsi.LastWriteTime.Ticks + "|" + typeName); } catch {} } }
                         byte[] resBytes = Encoding.UTF8.GetBytes(sb.ToString()); byte[] resLen = BitConverter.GetBytes(resBytes.Length); await ns.WriteAsync(resLen, 0, 4); await ns.WriteAsync(resBytes, 0, resBytes.Length);
                     }
-                    else if (cmd == "TASK_START") { currentInTask = new TransferTask { TaskName = parts[1], TotalBytes = long.Parse(parts[2]), Direction = "IN" }; SafeInvoke(() => { CreateTaskCard(currentInTask); }); }
+                    else if (cmd == "TASK_START") { currentInTask = new TransferTask { TaskName = parts[1], TotalBytes = long.Parse(parts[2]), Direction = "IN", TaskId = parts.Length > 4 ? parts[4] : Guid.NewGuid().ToString(), RemoteIP = ((IPEndPoint)client.Client.RemoteEndPoint).Address.ToString(), RemotePort = parts.Length > 5 ? int.Parse(parts[5]) : 0 }; SafeInvoke(() => { CreateTaskCard(currentInTask); }); }
                     else if (cmd == "TASK_END") { if (currentInTask != null) { currentInTask.CompleteTask("Completed"); currentInTask = null; } }
+                    else if (cmd == "SYNC_REMOVE_TASK") {
+                        string targetId = parts[1]; bool deleteFiles = parts.Length > 2 && parts[2] == "1";
+                        SafeInvoke(async () => {
+                            Control targetCard = null; TransferTask targetTask = null;
+                            foreach (Control c in historyFlow.Controls) { TransferTask t = c.Tag as TransferTask; if (t != null && t.TaskId == targetId) { targetCard = c; targetTask = t; break; } }
+                            if (targetCard != null && targetTask != null) {
+                                if (deleteFiles && targetTask.Direction == "IN") {
+                                    foreach (var f in targetTask.Files) {
+                                        if (!string.IsNullOrEmpty(f.DestinationPath) && File.Exists(f.DestinationPath)) { try { File.SetAttributes(f.DestinationPath, FileAttributes.Normal); File.Delete(f.DestinationPath); } catch {} }
+                                    }
+                                    await Task.Delay(500); RefreshLocalList(txtLocal.Text);
+                                }
+                                else if (deleteFiles && targetTask.Direction == "OUT") { await Task.Delay(800); RefreshRemoteList(); }
+                                historyFlow.Controls.Remove(targetCard); targetCard.Dispose();
+                            }
+                        });
+                    }
                     else if (cmd == "TASK_REMOTE_DELETE") { string[] paths = parts[1].Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries); foreach(var p in paths) { try { if (File.Exists(p)) { File.SetAttributes(p, FileAttributes.Normal); File.Delete(p); } else if (Directory.Exists(p)) Directory.Delete(p, true); } catch {} } SafeInvoke(() => RefreshLocalList(txtLocal.Text)); }
                     else if (cmd == "TASK_PULL") { int cp = int.Parse(parts[1]); string ld = parts[2]; string[] rp = parts[3].Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries); string ci = ((IPEndPoint)client.Client.RemoteEndPoint).Address.ToString(); string bd = Path.GetDirectoryName(rp[0]); ProcessOutgoingItems(ci, cp, rp, bd, ld); }
                     else if (cmd == "PUSH") {
@@ -1074,9 +1103,10 @@ namespace FileTransferApp
  { public override Color MenuStripGradientBegin { get { return Color.FromArgb(45, 45, 45); } } public override Color MenuStripGradientEnd { get { return Color.FromArgb(45, 45, 45); } } public override Color MenuItemSelected { get { return Color.FromArgb(60, 60, 60); } } public override Color MenuItemSelectedGradientBegin { get { return Color.FromArgb(60, 60, 60); } } public override Color MenuItemSelectedGradientEnd { get { return Color.FromArgb(60, 60, 60); } } public override Color MenuItemPressedGradientBegin { get { return Color.FromArgb(70, 70, 70); } } public override Color MenuItemPressedGradientEnd { get { return Color.FromArgb(70, 70, 70); } } public override Color MenuItemBorder { get { return Color.Transparent; } } public override Color MenuBorder { get { return Color.FromArgb(30, 30, 30); } } public override Color ToolStripDropDownBackground { get { return Color.FromArgb(30, 30, 30); } } public override Color SeparatorDark { get { return Color.FromArgb(80, 80, 80); } } public override Color ImageMarginGradientBegin { get { return Color.FromArgb(30, 30, 30); } } public override Color ImageMarginGradientMiddle { get { return Color.FromArgb(30, 30, 30); } } public override Color ImageMarginGradientEnd { get { return Color.FromArgb(30, 30, 30); } } }
     public class TransferItem { public string LocalPath { get; set; } public string RelativePath { get; set; } public string DestinationPath { get; set; } public long TotalSize { get; set; } public long TransferredBytes { get; set; } public TreeNode NodeRef { get; set; } }
     public class TransferTask {
+        public string TaskId { get; set; }
         public string TaskName { get; set; } public string Direction { get; set; } public long TotalBytes { get; set; } public long TransferredBytes { get; set; } public bool IsPaused { get; set; } public bool IsCancelled { get; set; } public List<TransferItem> Files { get; set; } public string LocalBaseDir { get; set; } public string RemoteIP { get; set; } public int RemotePort { get; set; }
         public Panel Card { get; set; } public ProgressBar Progress { get; set; } public Label StatusLbl { get; set; } public Label SpeedLbl { get; set; } public Button PauseBtn { get; set; } public Button CancelBtn { get; set; } public Button OpenBtn { get; set; } public Button DeleteBtn { get; set; } public Button RemoveBtn { get; set; } public TreeView FileTree { get; set; } public Panel TreePanel { get; set; }
-        public TransferTask() { Files = new List<TransferItem>(); }
+        public TransferTask() { Files = new List<TransferItem>(); TaskId = Guid.NewGuid().ToString(); }
         public void UpdateProgress(long totalCurrent, double speedMBs) { TransferredBytes = totalCurrent; if (Card != null && !Card.IsDisposed) { Card.BeginInvoke(new MethodInvoker(delegate { if (Progress != null) { int p = (int)((TransferredBytes * 100) / (TotalBytes > 0 ? TotalBytes : 1)); Progress.Value = Math.Min(100, p); } if (SpeedLbl != null) SpeedLbl.Text = speedMBs.ToString("F1") + " MB/s"; UpdateTreeNodes(); })); } }
         private void UpdateTreeNodes() { if (FileTree == null) return; foreach (var item in Files) { if (item.NodeRef != null) { int p = (int)((item.TransferredBytes * 100) / (item.TotalSize > 0 ? item.TotalSize : 1)); string newText = Path.GetFileName(item.RelativePath) + " [" + p + "%]"; if (item.NodeRef.Text != newText) item.NodeRef.Text = newText; UpdateParentNode(item.NodeRef.Parent); } } }
         private void UpdateParentNode(TreeNode parent) { if (parent == null) return; double totalP = 0; foreach (TreeNode child in parent.Nodes) { string txt = child.Text; int start = txt.LastIndexOf('['); int end = txt.LastIndexOf('%'); if (start >= 0 && end > start) { double p; if (double.TryParse(txt.Substring(start + 1, end - start - 1), out p)) totalP += p; } } int avgP = (int)(totalP / (parent.Nodes.Count > 0 ? parent.Nodes.Count : 1)); string cleanName = parent.Text.Split('[')[0].Trim(); parent.Text = cleanName + " [" + avgP + "%]"; UpdateParentNode(parent.Parent); }
