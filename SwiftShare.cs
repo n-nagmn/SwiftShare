@@ -1146,7 +1146,6 @@ namespace FileTransferApp
                 }
             } finally { 
                 tv.EndUpdate(); 
-                tv.ExpandAll();
                 int nodeCount = tv.GetNodeCount(true);
                 int itemHeight = tv.ItemHeight;
                 int requiredHeight = Math.Max(160, Math.Min(1200, nodeCount * itemHeight + 20));
