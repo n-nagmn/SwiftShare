@@ -72,6 +72,7 @@ namespace FileTransferApp
         public const uint SHGFI_ICON = 0x100;
         public const uint SHGFI_SMALLICON = 0x1;
         public const uint SHGFI_USEFILEATTRIBUTES = 0x10;
+        public const uint SHGFI_TYPENAME = 0x400;
 
         [DllImport("shell32.dll")]
         public static extern IntPtr SHGetFileInfo(string pszPath, uint dwFileAttributes, ref SHFILEINFO psfi, uint cbSizeFileInfo, uint uFlags);
@@ -83,6 +84,7 @@ namespace FileTransferApp
         private Color sidebarColor = Color.FromArgb(33, 33, 33);
         private Color bgColor = Color.FromArgb(245, 245, 245);
         private Color cardColor = Color.White;
+        private Dictionary<string, string> typeCache = new Dictionary<string, string>();
 
         [STAThread]
         static void Main()
@@ -469,6 +471,24 @@ namespace FileTransferApp
             lv.Sort();
         }
 
+        private string GetTypeName(string path, bool isFolder, bool useAttributes = true)
+        {
+            string key = isFolder ? "folder" : Path.GetExtension(path).ToLower();
+            if (string.IsNullOrEmpty(key)) key = ".unknown";
+            if (!typeCache.ContainsKey(key)) {
+                try {
+                    SHFILEINFO shfi = new SHFILEINFO();
+                    uint flags = SHGFI_TYPENAME;
+                    if (useAttributes) flags |= SHGFI_USEFILEATTRIBUTES;
+                    uint attributes = isFolder ? (uint)0x10 : (uint)0x80;
+                    if (SHGetFileInfo(path, attributes, ref shfi, (uint)Marshal.SizeOf(shfi), flags) != IntPtr.Zero) {
+                        typeCache[key] = shfi.szTypeName;
+                    }
+                } catch { }
+            }
+            return typeCache.ContainsKey(key) ? typeCache[key] : (isFolder ? "File folder" : "File");
+        }
+
         private int GetIconIndex(string path, bool isFolder, bool useAttributes = true)
         {
             string key = isFolder ? (useAttributes ? "folder" : "drive_" + path) : Path.GetExtension(path).ToLower();
@@ -654,12 +674,12 @@ namespace FileTransferApp
             SafeInvoke(() => {
                 try {
                     txtLocal.Text = path; lvLocal.Items.Clear();
-                    if (string.IsNullOrEmpty(path)) { foreach (var drive in DriveInfo.GetDrives()) { ListViewItem item = new ListViewItem(drive.Name); item.SubItems.Add(""); item.SubItems.Add("Drive"); item.SubItems.Add(""); item.Tag = "D"; item.ImageIndex = GetIconIndex(drive.Name, true, false); lvLocal.Items.Add(item); } }
+                    if (string.IsNullOrEmpty(path)) { foreach (var drive in DriveInfo.GetDrives()) { ListViewItem item = new ListViewItem(drive.Name); item.SubItems.Add(""); item.SubItems.Add(GetTypeName(drive.Name, true, false)); item.SubItems.Add(""); item.Tag = "D"; item.ImageIndex = GetIconIndex(drive.Name, true, false); lvLocal.Items.Add(item); } }
                     else {
                         if (!Directory.Exists(path)) return;
-                        DirectoryInfo di = new DirectoryInfo(path); ListViewItem up = new ListViewItem(".."); up.SubItems.Add(""); up.SubItems.Add("Folder"); up.SubItems.Add(""); up.Tag = "UP"; up.ImageIndex = GetIconIndex(path, true); lvLocal.Items.Add(up);
-                        foreach(var d in di.GetDirectories()) { try { if ((d.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden) continue; ListViewItem item = new ListViewItem(d.Name); item.SubItems.Add(d.LastWriteTime.ToString("yyyy/MM/dd HH:mm")); item.SubItems.Add("Folder"); item.SubItems.Add(""); item.Tag = "D"; item.ImageIndex = GetIconIndex(d.FullName, true); lvLocal.Items.Add(item); } catch {} }
-                        foreach(var f in di.GetFiles()) { try { if ((f.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden) continue; ListViewItem item = new ListViewItem(f.Name); item.SubItems.Add(f.LastWriteTime.ToString("yyyy/MM/dd HH:mm")); item.SubItems.Add("File"); item.SubItems.Add(FormatSize(f.Length)); item.Tag = "F"; item.ImageIndex = GetIconIndex(f.FullName, false); lvLocal.Items.Add(item); } catch {} }
+                        DirectoryInfo di = new DirectoryInfo(path); ListViewItem up = new ListViewItem(".."); up.SubItems.Add(""); up.SubItems.Add("File folder"); up.SubItems.Add(""); up.Tag = "UP"; up.ImageIndex = GetIconIndex(path, true); lvLocal.Items.Add(up);
+                        foreach(var d in di.GetDirectories()) { try { if ((d.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden) continue; ListViewItem item = new ListViewItem(d.Name); item.SubItems.Add(d.LastWriteTime.ToString("yyyy/MM/dd HH:mm")); item.SubItems.Add(GetTypeName(d.FullName, true)); item.SubItems.Add(""); item.Tag = "D"; item.ImageIndex = GetIconIndex(d.FullName, true); lvLocal.Items.Add(item); } catch {} }
+                        foreach(var f in di.GetFiles()) { try { if ((f.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden) continue; ListViewItem item = new ListViewItem(f.Name); item.SubItems.Add(f.LastWriteTime.ToString("yyyy/MM/dd HH:mm")); item.SubItems.Add(GetTypeName(f.FullName, false)); item.SubItems.Add(FormatSize(f.Length)); item.Tag = "F"; item.ImageIndex = GetIconIndex(f.FullName, false); lvLocal.Items.Add(item); } catch {} }
                     }
                 } catch (Exception ex) { MessageBox.Show("Cannot access local path: " + ex.Message); }
             });
@@ -682,9 +702,9 @@ namespace FileTransferApp
                             if (!string.IsNullOrEmpty(currentRemotePath)) { ListViewItem up = new ListViewItem(".."); up.SubItems.Add(""); up.SubItems.Add("Folder"); up.SubItems.Add(""); up.Tag = "UP"; up.ImageIndex = GetIconIndex(currentRemotePath, true); lvRemote.Items.Add(up); }
                             string[] lines = resStr.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
                             foreach(string line in lines) {
-                                string[] parts = line.Split('|'); string type = parts[0]; string name = parts[1]; string size = parts.Length > 2 ? parts[2] : ""; string ticks = parts.Length > 3 ? parts[3] : "";
+                                string[] parts = line.Split('|'); string type = parts[0]; string name = parts[1]; string size = parts.Length > 2 ? parts[2] : ""; string ticks = parts.Length > 3 ? parts[3] : ""; string typeName = parts.Length > 4 ? parts[4] : (type == "D" ? (string.IsNullOrEmpty(currentRemotePath) ? "Drive" : "File folder") : "File");
                                 string dateStr = ""; if (!string.IsNullOrEmpty(ticks)) { try { dateStr = new DateTime(long.Parse(ticks)).ToString("yyyy/MM/dd HH:mm"); } catch {} }
-                                ListViewItem item = new ListViewItem(name); item.SubItems.Add(dateStr); item.SubItems.Add(type == "D" ? (string.IsNullOrEmpty(currentRemotePath) ? "Drive" : "Folder") : "File"); item.SubItems.Add(type == "D" ? "" : FormatSize(long.Parse(size))); item.Tag = type; item.ImageIndex = GetIconIndex(name, type == "D"); lvRemote.Items.Add(item);
+                                ListViewItem item = new ListViewItem(name); item.SubItems.Add(dateStr); item.SubItems.Add(typeName); item.SubItems.Add(type == "D" ? "" : FormatSize(long.Parse(size))); item.Tag = type; item.ImageIndex = GetIconIndex(name, type == "D"); lvRemote.Items.Add(item);
                             }
                         });
                     }
@@ -815,8 +835,8 @@ namespace FileTransferApp
                     string cmdStr = await ReadCommandAsync(ns); string[] parts = cmdStr.Split('|'); string cmd = parts[0];
                     if (cmd == "LIST") {
                         string reqPath = parts.Length > 1 ? parts[1] : ""; StringBuilder sb = new StringBuilder();
-                        if (string.IsNullOrEmpty(reqPath)) { foreach (var d in DriveInfo.GetDrives()) sb.AppendLine("D|" + d.Name); }
-                        else if (Directory.Exists(reqPath)) { foreach (FileSystemInfo fsi in new DirectoryInfo(reqPath).GetFileSystemInfos()) { try { if ((fsi.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden) continue; if (fsi is DirectoryInfo) sb.AppendLine("D|" + fsi.Name + "||" + fsi.LastWriteTime.Ticks); else sb.AppendLine("F|" + fsi.Name + "|" + ((FileInfo)fsi).Length + "|" + fsi.LastWriteTime.Ticks); } catch {} } }
+                        if (string.IsNullOrEmpty(reqPath)) { foreach (var d in DriveInfo.GetDrives()) sb.AppendLine("D|" + d.Name + "|||" + GetTypeName(d.Name, true, false)); }
+                        else if (Directory.Exists(reqPath)) { foreach (FileSystemInfo fsi in new DirectoryInfo(reqPath).GetFileSystemInfos()) { try { if ((fsi.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden) continue; string typeName = GetTypeName(fsi.FullName, fsi is DirectoryInfo); if (fsi is DirectoryInfo) sb.AppendLine("D|" + fsi.Name + "||" + fsi.LastWriteTime.Ticks + "|" + typeName); else sb.AppendLine("F|" + fsi.Name + "|" + ((FileInfo)fsi).Length + "|" + fsi.LastWriteTime.Ticks + "|" + typeName); } catch {} } }
                         byte[] resBytes = Encoding.UTF8.GetBytes(sb.ToString()); byte[] resLen = BitConverter.GetBytes(resBytes.Length); await ns.WriteAsync(resLen, 0, 4); await ns.WriteAsync(resBytes, 0, resBytes.Length);
                     }
                     else if (cmd == "TASK_START") { currentInTask = new TransferTask { TaskName = parts[1], TotalBytes = long.Parse(parts[2]), Direction = "IN" }; SafeInvoke(() => { CreateTaskCard(currentInTask); }); }
