@@ -334,9 +334,10 @@ namespace FileTransferApp
 
             lvLocal.DoubleClick += (s, e) => {
                 if (lvLocal.SelectedItems.Count == 0) return;
-                var item = lvLocal.SelectedItems[0];
-                if (item.Tag.ToString() == "UP") btnLocalUp.PerformClick();
-                else if (item.Tag.ToString() == "D") {
+                var item = lvLocal.SelectedItems[0]; string tag = item.Tag.ToString();
+                if (tag == "UP") btnLocalUp.PerformClick();
+                else if (tag.StartsWith("DRIVE|")) RefreshLocalList(tag.Split('|')[1]);
+                else if (tag == "D") {
                     string nextPath = string.IsNullOrEmpty(txtLocal.Text) ? item.Text : Path.Combine(txtLocal.Text, item.Text);
                     RefreshLocalList(nextPath);
                 }
@@ -355,8 +356,9 @@ namespace FileTransferApp
                 string ip = epParts[0]; int port = int.Parse(epParts[1]);
                 List<string> paths = new List<string>();
                 foreach(ListViewItem item in lvLocal.SelectedItems) {
-                    if (item.Tag.ToString() == "UP") continue;
-                    paths.Add(Path.Combine(txtLocal.Text, item.Text));
+                    string tag = item.Tag.ToString();
+                    if (tag == "UP") continue;
+                    paths.Add(tag.StartsWith("DRIVE|") ? tag.Split('|')[1] : Path.Combine(txtLocal.Text, item.Text));
                 }
                 await ProcessOutgoingItems(ip, port, paths.ToArray(), txtLocal.Text, currentRemotePath);
             };
@@ -401,9 +403,13 @@ namespace FileTransferApp
 
             lvRemote.DoubleClick += (s, e) => {
                 if (lvRemote.SelectedItems.Count == 0) return;
-                var item = lvRemote.SelectedItems[0];
-                if (item.Tag.ToString() == "UP") btnRemoteUp.PerformClick();
-                else if (item.Tag.ToString() == "D") {
+                var item = lvRemote.SelectedItems[0]; string tag = item.Tag.ToString();
+                if (tag == "UP") btnRemoteUp.PerformClick();
+                else if (tag.StartsWith("DRIVE|")) {
+                    currentRemotePath = tag.Split('|')[1];
+                    RefreshRemoteList();
+                }
+                else if (tag == "D") {
                     currentRemotePath = string.IsNullOrEmpty(currentRemotePath) ? item.Text : Path.Combine(currentRemotePath, item.Text);
                     RefreshRemoteList();
                 }
@@ -422,8 +428,9 @@ namespace FileTransferApp
                 string ip = epParts[0]; int port = int.Parse(epParts[1]);
                 List<string> remotePaths = new List<string>();
                 foreach(ListViewItem item in lvRemote.SelectedItems) {
-                    if (item.Tag.ToString() == "UP") continue;
-                    remotePaths.Add(string.IsNullOrEmpty(currentRemotePath) ? item.Text : Path.Combine(currentRemotePath, item.Text));
+                    string tag = item.Tag.ToString();
+                    if (tag == "UP") continue;
+                    remotePaths.Add(tag.StartsWith("DRIVE|") ? tag.Split('|')[1] : (string.IsNullOrEmpty(currentRemotePath) ? item.Text : Path.Combine(currentRemotePath, item.Text)));
                 }
                 await RequestPullItems(ip, port, remotePaths.ToArray(), txtLocal.Text);
             };
@@ -518,8 +525,9 @@ namespace FileTransferApp
             if (lvLocal.SelectedItems.Count == 0 || string.IsNullOrEmpty(txtLocal.Text)) return;
             StringCollection paths = new StringCollection();
             foreach (ListViewItem item in lvLocal.SelectedItems) {
-                if (item.Tag.ToString() == "UP") continue;
-                paths.Add(Path.Combine(txtLocal.Text, item.Text));
+                string tag = item.Tag.ToString();
+                if (tag == "UP") continue;
+                paths.Add(tag.StartsWith("DRIVE|") ? tag.Split('|')[1] : Path.Combine(txtLocal.Text, item.Text));
             }
             if (paths.Count > 0) Clipboard.SetFileDropList(paths);
             remoteClipboardPaths.Clear();
@@ -552,8 +560,9 @@ namespace FileTransferApp
             if (lvRemote.SelectedItems.Count == 0 || string.IsNullOrEmpty(currentRemotePeer)) return;
             remoteClipboardPaths.Clear();
             foreach (ListViewItem item in lvRemote.SelectedItems) {
-                if (item.Tag.ToString() == "UP") continue;
-                remoteClipboardPaths.Add(string.IsNullOrEmpty(currentRemotePath) ? item.Text : Path.Combine(currentRemotePath, item.Text));
+                string tag = item.Tag.ToString();
+                if (tag == "UP") continue;
+                remoteClipboardPaths.Add(tag.StartsWith("DRIVE|") ? tag.Split('|')[1] : (string.IsNullOrEmpty(currentRemotePath) ? item.Text : Path.Combine(currentRemotePath, item.Text)));
             }
             remoteClipboardPeer = currentRemotePeer;
             Clipboard.Clear();
@@ -585,8 +594,9 @@ namespace FileTransferApp
             if (lvLocal.SelectedItems.Count == 0 || string.IsNullOrEmpty(txtLocal.Text)) return;
             if (MessageBox.Show("Delete selected local files?", "Confirm Delete", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes) {
                 foreach (ListViewItem item in lvLocal.SelectedItems) {
-                    if (item.Tag.ToString() == "UP") continue;
-                    string p = Path.Combine(txtLocal.Text, item.Text);
+                    string tag = item.Tag.ToString();
+                    if (tag == "UP") continue;
+                    string p = tag.StartsWith("DRIVE|") ? tag.Split('|')[1] : Path.Combine(txtLocal.Text, item.Text);
                     try {
                         if (File.Exists(p)) { File.SetAttributes(p, FileAttributes.Normal); File.Delete(p); }
                         else if (Directory.Exists(p)) Directory.Delete(p, true);
@@ -608,8 +618,10 @@ namespace FileTransferApp
                         using (NetworkStream ns = client.GetStream()) {
                             StringBuilder sb = new StringBuilder();
                             foreach (ListViewItem item in lvRemote.SelectedItems) {
-                                if (item.Tag.ToString() == "UP") continue;
-                                sb.Append(string.IsNullOrEmpty(currentRemotePath) ? item.Text : Path.Combine(currentRemotePath, item.Text)).Append(";");
+                                string tag = item.Tag.ToString();
+                                if (tag == "UP") continue;
+                                string p = tag.StartsWith("DRIVE|") ? tag.Split('|')[1] : (string.IsNullOrEmpty(currentRemotePath) ? item.Text : Path.Combine(currentRemotePath, item.Text));
+                                sb.Append(p).Append(";");
                             }
                             await SendCommandAsync(ns, "TASK_REMOTE_DELETE|" + sb.ToString());
                         }
@@ -675,7 +687,13 @@ namespace FileTransferApp
             SafeInvoke(() => {
                 try {
                     txtLocal.Text = path; lvLocal.Items.Clear();
-                    if (string.IsNullOrEmpty(path)) { foreach (var drive in DriveInfo.GetDrives()) { ListViewItem item = new ListViewItem(drive.Name); item.SubItems.Add(""); var tSi = item.SubItems.Add(GetTypeName(drive.Name, true, false)); tSi.Font = typeFont; item.SubItems.Add(""); item.Tag = "D"; item.ImageIndex = GetIconIndex(drive.Name, true, false); item.UseItemStyleForSubItems = false; lvLocal.Items.Add(item); } }
+                    if (string.IsNullOrEmpty(path)) { 
+                        foreach (var drive in DriveInfo.GetDrives()) { 
+                            string vol = ""; try { if (drive.IsReady) vol = drive.VolumeLabel; } catch {}
+                            string name = string.IsNullOrEmpty(vol) ? drive.Name : vol + " (" + drive.Name.TrimEnd('\\') + ")";
+                            ListViewItem item = new ListViewItem(name); item.SubItems.Add(""); var tSi = item.SubItems.Add(GetTypeName(drive.Name, true, false)); tSi.Font = typeFont; item.SubItems.Add(""); item.Tag = "DRIVE|" + drive.Name; item.ImageIndex = GetIconIndex(drive.Name, true, false); item.UseItemStyleForSubItems = false; lvLocal.Items.Add(item); 
+                        } 
+                    }
                     else {
                         if (!Directory.Exists(path)) return;
                         DirectoryInfo di = new DirectoryInfo(path); ListViewItem up = new ListViewItem(".."); up.SubItems.Add(""); var tSiUp = up.SubItems.Add("File folder"); tSiUp.Font = typeFont; up.SubItems.Add(""); up.Tag = "UP"; up.ImageIndex = GetIconIndex(path, true); up.UseItemStyleForSubItems = false; lvLocal.Items.Add(up);
@@ -703,9 +721,15 @@ namespace FileTransferApp
                             if (!string.IsNullOrEmpty(currentRemotePath)) { ListViewItem up = new ListViewItem(".."); up.SubItems.Add(""); var tSiUp = up.SubItems.Add("File folder"); tSiUp.Font = typeFont; up.SubItems.Add(""); up.Tag = "UP"; up.ImageIndex = GetIconIndex(currentRemotePath, true); up.UseItemStyleForSubItems = false; lvRemote.Items.Add(up); }
                             string[] lines = resStr.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
                             foreach(string line in lines) {
-                                string[] parts = line.Split('|'); string type = parts[0]; string name = parts[1]; string size = parts.Length > 2 ? parts[2] : ""; string ticks = parts.Length > 3 ? parts[3] : ""; string typeName = parts.Length > 4 ? parts[4] : (type == "D" ? (string.IsNullOrEmpty(currentRemotePath) ? "Drive" : "File folder") : "File");
-                                string dateStr = ""; if (!string.IsNullOrEmpty(ticks)) { try { dateStr = new DateTime(long.Parse(ticks)).ToString("yyyy/MM/dd HH:mm"); } catch {} }
-                                ListViewItem item = new ListViewItem(name); item.SubItems.Add(dateStr); var tSi = item.SubItems.Add(typeName); tSi.Font = typeFont; item.SubItems.Add(type == "D" ? "" : FormatSize(long.Parse(size))); item.Tag = type; item.ImageIndex = GetIconIndex(name, type == "D"); item.UseItemStyleForSubItems = false; lvRemote.Items.Add(item);
+                                string[] parts = line.Split('|'); string type = parts[0]; 
+                                if (type == "DRIVE") {
+                                    string name = parts[1]; string realPath = parts[2]; string typeName = parts.Length > 5 ? parts[5] : "Drive";
+                                    ListViewItem item = new ListViewItem(name); item.SubItems.Add(""); var tSi = item.SubItems.Add(typeName); tSi.Font = typeFont; item.SubItems.Add(""); item.Tag = "DRIVE|" + realPath; item.ImageIndex = GetIconIndex(realPath, true, false); item.UseItemStyleForSubItems = false; lvRemote.Items.Add(item);
+                                } else {
+                                    string name = parts[1]; string size = parts.Length > 2 ? parts[2] : ""; string ticks = parts.Length > 3 ? parts[3] : ""; string typeName = parts.Length > 4 ? parts[4] : (type == "D" ? (string.IsNullOrEmpty(currentRemotePath) ? "Drive" : "File folder") : "File");
+                                    string dateStr = ""; if (!string.IsNullOrEmpty(ticks)) { try { dateStr = new DateTime(long.Parse(ticks)).ToString("yyyy/MM/dd HH:mm"); } catch {} }
+                                    ListViewItem item = new ListViewItem(name); item.SubItems.Add(dateStr); var tSi = item.SubItems.Add(typeName); tSi.Font = typeFont; item.SubItems.Add(type == "D" ? "" : FormatSize(long.Parse(size))); item.Tag = type; item.ImageIndex = GetIconIndex(name, type == "D"); item.UseItemStyleForSubItems = false; lvRemote.Items.Add(item);
+                                }
                             }
                         });
                     }
@@ -836,7 +860,13 @@ namespace FileTransferApp
                     string cmdStr = await ReadCommandAsync(ns); string[] parts = cmdStr.Split('|'); string cmd = parts[0];
                     if (cmd == "LIST") {
                         string reqPath = parts.Length > 1 ? parts[1] : ""; StringBuilder sb = new StringBuilder();
-                        if (string.IsNullOrEmpty(reqPath)) { foreach (var d in DriveInfo.GetDrives()) sb.AppendLine("D|" + d.Name + "|||" + GetTypeName(d.Name, true, false)); }
+                        if (string.IsNullOrEmpty(reqPath)) { 
+                            foreach (var d in DriveInfo.GetDrives()) {
+                                string vol = ""; try { if (d.IsReady) vol = d.VolumeLabel; } catch {}
+                                string name = string.IsNullOrEmpty(vol) ? d.Name : vol + " (" + d.Name.TrimEnd('\\') + ")";
+                                sb.AppendLine("DRIVE|" + name + "|" + d.Name + "|||" + GetTypeName(d.Name, true, false)); 
+                            }
+                        }
                         else if (Directory.Exists(reqPath)) { foreach (FileSystemInfo fsi in new DirectoryInfo(reqPath).GetFileSystemInfos()) { try { if ((fsi.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden) continue; string typeName = GetTypeName(fsi.FullName, fsi is DirectoryInfo); if (fsi is DirectoryInfo) sb.AppendLine("D|" + fsi.Name + "||" + fsi.LastWriteTime.Ticks + "|" + typeName); else sb.AppendLine("F|" + fsi.Name + "|" + ((FileInfo)fsi).Length + "|" + fsi.LastWriteTime.Ticks + "|" + typeName); } catch {} } }
                         byte[] resBytes = Encoding.UTF8.GetBytes(sb.ToString()); byte[] resLen = BitConverter.GetBytes(resBytes.Length); await ns.WriteAsync(resLen, 0, 4); await ns.WriteAsync(resBytes, 0, resBytes.Length);
                     }
