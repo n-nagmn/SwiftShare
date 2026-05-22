@@ -111,7 +111,7 @@ namespace FileTransferApp
         private Color bgColor = Color.FromArgb(245, 245, 245);
         private Color cardColor = Color.White;
         private Dictionary<string, string> typeCache = new Dictionary<string, string>();
-        private Font typeFont = new Font("Segoe UI", 9f);
+        private Font typeFont = new Font("Yu Gothic UI", 9f);
         private Dictionary<string, string> peerNames = new Dictionary<string, string>();
 
         [STAThread]
@@ -323,7 +323,7 @@ namespace FileTransferApp
             Label logo = new Label();
             logo.Text = "SwiftShare";
             logo.ForeColor = Color.White;
-            logo.Font = new Font("Segoe UI Semibold", 18);
+            logo.Font = new Font("Yu Gothic UI", 18);
             logo.Location = new Point(20, 30);
             logo.AutoSize = true;
             sidebar.Controls.Add(logo);
@@ -331,7 +331,7 @@ namespace FileTransferApp
             infoLbl = new Label();
             infoLbl.Text = "IP: " + myIpAddress + "\nPort: " + actualTcpPort + "\nLink: " + linkSpeed;
             infoLbl.ForeColor = Color.DarkGray;
-            infoLbl.Font = new Font("Segoe UI", 8);
+            infoLbl.Font = new Font("Yu Gothic UI", 8);
             infoLbl.Location = new Point(22, 70);
             infoLbl.AutoSize = true;
             sidebar.Controls.Add(infoLbl);
@@ -339,7 +339,7 @@ namespace FileTransferApp
             Label onlineTitle = new Label();
             onlineTitle.Text = "ONLINE PEERS";
             onlineTitle.ForeColor = Color.Gray;
-            onlineTitle.Font = new Font("Segoe UI", 9, FontStyle.Bold);
+            onlineTitle.Font = new Font("Yu Gothic UI", 9, FontStyle.Bold);
             onlineTitle.Location = new Point(20, 160);
             onlineTitle.AutoSize = true;
             sidebar.Controls.Add(onlineTitle);
@@ -414,7 +414,7 @@ namespace FileTransferApp
             explorerCard.Controls.Add(splitExplorer);
 
             // Left Pane (Local)
-            Label lblLocal = new Label() { Text = "Local:", Location = new Point(5, 7), AutoSize = true, Font = new Font("Segoe UI Semibold", 9) };
+            Label lblLocal = new Label() { Text = "Local:", Location = new Point(5, 7), AutoSize = true, Font = new Font("Yu Gothic UI", 9) };
             txtLocal = new TextBox() { Location = new Point(55, 5), Width = splitExplorer.Panel1.Width - 140, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             txtLocal.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { RefreshLocalList(txtLocal.Text); e.Handled = true; e.SuppressKeyPress = true; } };
             btnLocalUp = new Button() { Text = "↑", Location = new Point(splitExplorer.Panel1.Width - 80, 4), Size = new Size(35, 25), Anchor = AnchorStyles.Top | AnchorStyles.Right };
@@ -429,7 +429,7 @@ namespace FileTransferApp
             btnLocalRefresh = new Button() { Text = "↻", Location = new Point(splitExplorer.Panel1.Width - 40, 4), Size = new Size(35, 25), Anchor = AnchorStyles.Top | AnchorStyles.Right };
             btnLocalRefresh.Click += (s, e) => RefreshLocalList(txtLocal.Text);
             
-            lvLocal = new ListView() { Location = new Point(5, 35), Size = new Size(splitExplorer.Panel1.Width - 10, splitExplorer.Panel1.Height - 80), View = View.Details, FullRowSelect = true, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right, Font = new Font("Segoe UI", 9.5f) };
+            lvLocal = new ListView() { Location = new Point(5, 35), Size = new Size(splitExplorer.Panel1.Width - 10, splitExplorer.Panel1.Height - 80), View = View.Details, FullRowSelect = true, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right, Font = new Font("Yu Gothic UI", 9f) };
             lvLocal.Columns.Add("Name", 200);
             lvLocal.Columns.Add("Date Modified", 130);
             lvLocal.Columns.Add("Type", 150);
@@ -482,7 +482,7 @@ namespace FileTransferApp
             splitExplorer.Panel1.Controls.AddRange(new Control[] { lblLocal, txtLocal, btnLocalUp, btnLocalRefresh, lvLocal, btnUpload });
 
             // Right Pane (Remote)
-            Label lblRemote = new Label() { Text = "Remote:", Location = new Point(5, 7), AutoSize = true, Font = new Font("Segoe UI Semibold", 9) };
+            Label lblRemote = new Label() { Text = "Remote:", Location = new Point(5, 7), AutoSize = true, Font = new Font("Yu Gothic UI", 9) };
             txtRemote = new TextBox() { Location = new Point(65, 5), Width = splitExplorer.Panel2.Width - 150, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             txtRemote.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { currentRemotePath = txtRemote.Text; RefreshRemoteList(); e.Handled = true; e.SuppressKeyPress = true; } };
             btnRemoteUp = new Button() { Text = "↑", Location = new Point(splitExplorer.Panel2.Width - 80, 4), Size = new Size(35, 25), Anchor = AnchorStyles.Top | AnchorStyles.Right };
@@ -497,7 +497,7 @@ namespace FileTransferApp
             btnRemoteRefresh = new Button() { Text = "↻", Location = new Point(splitExplorer.Panel2.Width - 40, 4), Size = new Size(35, 25), Anchor = AnchorStyles.Top | AnchorStyles.Right };
             btnRemoteRefresh.Click += (s, e) => RefreshRemoteList();
 
-            lvRemote = new ListView() { Location = new Point(5, 35), Size = new Size(splitExplorer.Panel2.Width - 10, splitExplorer.Panel2.Height - 80), View = View.Details, FullRowSelect = true, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right, Font = new Font("Segoe UI", 9.5f) };
+            lvRemote = new ListView() { Location = new Point(5, 35), Size = new Size(splitExplorer.Panel2.Width - 10, splitExplorer.Panel2.Height - 80), View = View.Details, FullRowSelect = true, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right, Font = new Font("Yu Gothic UI", 9f) };
             lvRemote.Columns.Add("Name", 200);
             lvRemote.Columns.Add("Date Modified", 130);
             lvRemote.Columns.Add("Type", 150);
@@ -797,7 +797,7 @@ namespace FileTransferApp
         private Panel CreateCard(string title, int x, int y, int w, int h)
         {
             Panel card = new Panel() { Location = new Point(x, y), Size = new Size(w, h), BackColor = cardColor };
-            Label lbl = new Label() { Text = title.ToUpper(), Font = new Font("Segoe UI", 9, FontStyle.Bold), ForeColor = Color.Silver, Location = new Point(20, 10), AutoSize = true };
+            Label lbl = new Label() { Text = title.ToUpper(), Font = new Font("Yu Gothic UI", 9, FontStyle.Bold), ForeColor = Color.Silver, Location = new Point(20, 10), AutoSize = true };
             card.Controls.Add(lbl); return card;
         }
 
@@ -809,10 +809,10 @@ namespace FileTransferApp
             string fullText = peerList.Items[e.Index].ToString(); string[] parts = fullText.Split(new string[] { " (" }, StringSplitOptions.None);
             string ip = parts[0].Split(':')[0];
             string displayName = peerNames.ContainsKey(ip) ? peerNames[ip].Split('|')[0] : parts[0];
-            e.Graphics.DrawString(displayName, new Font("Segoe UI Semibold", 10), Brushes.White, e.Bounds.X + 20, e.Bounds.Y + 8);
+            e.Graphics.DrawString(displayName, new Font("Yu Gothic UI", 10), Brushes.White, e.Bounds.X + 20, e.Bounds.Y + 8);
             
             string subText = (peerNames.ContainsKey(ip) ? parts[0] + " - " : "") + (parts.Length > 1 ? parts[1].Replace(")", "") : "");
-            if (!string.IsNullOrEmpty(subText)) { e.Graphics.DrawString(subText, new Font("Segoe UI", 8), Brushes.LightGray, e.Bounds.X + 20, e.Bounds.Y + 30); }
+            if (!string.IsNullOrEmpty(subText)) { e.Graphics.DrawString(subText, new Font("Yu Gothic UI", 8), Brushes.LightGray, e.Bounds.X + 20, e.Bounds.Y + 30); }
         }
 
         private void RefreshLocalList(string path)
@@ -1048,13 +1048,13 @@ namespace FileTransferApp
             card.MouseEnter += (s, e) => historyFlow.Focus();
             task.Card = card;
             card.Tag = task;
-            Label nameLbl = new Label { Text = (task.Direction == "OUT" ? "↗ " : "↘ ") + task.TaskName, Font = new Font("Segoe UI Semibold", 10), Location = new Point(10, 10), AutoSize = true };
+            Label nameLbl = new Label { Text = (task.Direction == "OUT" ? "↗ " : "↘ ") + task.TaskName, Font = new Font("Yu Gothic UI", 10), Location = new Point(10, 10), AutoSize = true };
             task.NameLbl = nameLbl; card.Controls.Add(nameLbl);
             ProgressBar pb = new ProgressBar { Location = new Point(10, 35), Height = 10 };
             task.Progress = pb; card.Controls.Add(pb);
-            Label statusLbl = new Label { Text = "Status: Waiting", Font = new Font("Segoe UI", 8), ForeColor = Color.Gray, Location = new Point(10, 50), Size = new Size(200, 15) };
+            Label statusLbl = new Label { Text = "Status: Waiting", Font = new Font("Yu Gothic UI", 8), ForeColor = Color.Gray, Location = new Point(10, 50), Size = new Size(200, 15) };
             task.StatusLbl = statusLbl; card.Controls.Add(statusLbl);
-            Label speedLbl = new Label { Text = "0.0 MB/s", Font = new Font("Segoe UI Semibold", 9), ForeColor = primaryColor, Location = new Point(0, 30), Size = new Size(90, 20), TextAlign = ContentAlignment.MiddleRight };
+            Label speedLbl = new Label { Text = "0.0 MB/s", Font = new Font("Yu Gothic UI", 9), ForeColor = primaryColor, Location = new Point(0, 30), Size = new Size(90, 20), TextAlign = ContentAlignment.MiddleRight };
             task.SpeedLbl = speedLbl; card.Controls.Add(speedLbl);
             Button expandBtn = new Button { Text = "Files ▼", Location = new Point(0, 10), Size = new Size(100, 25), FlatStyle = FlatStyle.Flat };
             Button removeBtn = new Button { Text = "Remove", Location = new Point(0, 10), Size = new Size(100, 25), FlatStyle = FlatStyle.Flat, Visible = false };
@@ -1132,7 +1132,7 @@ namespace FileTransferApp
         {
             if (task.TreePanel != null) { task.Card.Controls.Remove(task.TreePanel); task.TreePanel.Dispose(); task.TreePanel = null; }
             Panel pnl = new Panel { Location = new Point(10, 75), Size = new Size(task.Card.ClientSize.Width - 20, 160), BorderStyle = BorderStyle.None, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
-            TransparentTreeView tv = new TransparentTreeView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Segoe UI", 9), ImageList = imageList, ShowLines = true, ShowPlusMinus = true };
+            TransparentTreeView tv = new TransparentTreeView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Yu Gothic UI", 9), ImageList = imageList, ShowLines = true, ShowPlusMinus = true };
             
             // Standard WinForms fix for mouse wheel: focus on hover
             tv.MouseEnter += (s, e) => { tv.Focus(); };
