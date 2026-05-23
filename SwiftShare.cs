@@ -1039,10 +1039,10 @@ namespace FileTransferApp
                         long fsLen = new FileInfo(localPath).Length;
                         string hash = "";
                         if (fsLen > 0) {
-                            using (var md5 = System.Security.Cryptography.MD5.Create())
-                            using (var fs = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)) {
-                                hash = BitConverter.ToString(md5.ComputeHash(fs)).Replace("-", "").ToLower();
-                            }
+                            // using (var md5 = System.Security.Cryptography.MD5.Create())
+                            // using (var fs = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)) {
+                            //     hash = BitConverter.ToString(md5.ComputeHash(fs)).Replace("-", "").ToLower();
+                            // }
                         }
                         await SendCommandAsync(ns, "PUSH|" + remotePath + "|" + fsLen + "|" + task.TaskId + "|" + relPathForTree + "|" + hash);
                         if (fsLen > 0) {
@@ -1724,7 +1724,7 @@ namespace FileTransferApp
                         Progress.Value = p;
                     } 
                     if (SpeedLbl != null) SpeedLbl.Text = speedMBs.ToString("F1") + " MB/s"; 
-                    if (TotalItems < 50000) UpdateTreeNodes(); 
+                    if (TotalItems <= 50) UpdateTreeNodes(); 
                 })); 
             } 
         }
