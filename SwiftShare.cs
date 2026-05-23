@@ -79,6 +79,7 @@ namespace FileTransferApp
         };
 
         public const uint SHGFI_ICON = 0x100;
+        public const uint SHGFI_LARGEICON = 0x0;
         public const uint SHGFI_SMALLICON = 0x1;
         public const uint SHGFI_USEFILEATTRIBUTES = 0x10;
         public const uint SHGFI_TYPENAME = 0x400;
@@ -194,14 +195,14 @@ namespace FileTransferApp
 
         private Icon CreateStylishIcon()
         {
-            using (Bitmap bmp = new Bitmap(32, 32))
+            using (Bitmap bmp = new Bitmap(S(32), S(32)))
             using (Graphics g = Graphics.FromImage(bmp)) {
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                using (System.Drawing.Drawing2D.LinearGradientBrush brush = new System.Drawing.Drawing2D.LinearGradientBrush(new Point(0, 0), new Point(32, 32), Color.FromArgb(63, 81, 181), Color.FromArgb(48, 63, 159))) {
-                    g.FillEllipse(brush, 2, 2, 28, 28);
+                using (System.Drawing.Drawing2D.LinearGradientBrush brush = new System.Drawing.Drawing2D.LinearGradientBrush(new Point(0, 0), new Point(S(32), S(32)), Color.FromArgb(63, 81, 181), Color.FromArgb(48, 63, 159))) {
+                    g.FillEllipse(brush, S(2), S(2), S(28), S(28));
                 }
-                Point[] pts = { new Point(8, 16), new Point(16, 8), new Point(24, 16), new Point(16, 16), new Point(16, 24) };
-                using (Pen p = new Pen(Color.White, 3)) {
+                Point[] pts = { new Point(S(8), S(16)), new Point(S(16), S(8)), new Point(S(24), S(16)), new Point(S(16), S(16)), new Point(S(16), S(24)) };
+                using (Pen p = new Pen(Color.White, Math.Max(1, S(3)))) {
                     p.LineJoin = System.Drawing.Drawing2D.LineJoin.Round;
                     g.DrawLines(p, pts);
                 }
@@ -589,7 +590,7 @@ namespace FileTransferApp
 
             imageList = new ImageList();
             imageList.ColorDepth = ColorDepth.Depth32Bit;
-            imageList.ImageSize = new Size(16, 16);
+            imageList.ImageSize = new Size(S(16), S(16));
             lvLocal.SmallImageList = imageList;
             lvRemote.SmallImageList = imageList;
 
@@ -638,7 +639,7 @@ namespace FileTransferApp
             {
                 try {
                     SHFILEINFO shfi = new SHFILEINFO();
-                    uint flags = SHGFI_ICON | SHGFI_SMALLICON;
+                    uint flags = SHGFI_ICON | (S(16) > 24 ? SHGFI_LARGEICON : SHGFI_SMALLICON);
                     if (useAttributes) flags |= SHGFI_USEFILEATTRIBUTES;
                     uint attributes = isFolder ? (uint)0x10 : (uint)0x80;
                     if (SHGetFileInfo(path, attributes, ref shfi, (uint)Marshal.SizeOf(shfi), flags) != IntPtr.Zero) {
