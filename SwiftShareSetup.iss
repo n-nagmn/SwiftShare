@@ -13,6 +13,7 @@ WizardStyle=modern
 ; The following line fixes the "different icon from main app" by applying the app's icon to the installer
 SetupIconFile=icon.ico
 PrivilegesRequired=admin
+UsePreviousPrivileges=no
 ArchitecturesInstallIn64BitMode=x64
 
 [Files]

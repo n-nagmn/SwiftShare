@@ -142,8 +142,17 @@ namespace FileTransferApp
             }
         }
 
+        private void EnsureFirewallRule() {
+            try {
+                string exePath = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
+                using (var pDel = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = "netsh", Arguments = "advfirewall firewall delete rule name=\"SwiftShare\"", UseShellExecute = false, CreateNoWindow = true })) { pDel.WaitForExit(); }
+                using (var pAdd = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = "netsh", Arguments = "advfirewall firewall add rule name=\"SwiftShare\" dir=in action=allow program=\"" + exePath + "\" enable=yes profile=any", UseShellExecute = false, CreateNoWindow = true })) { pAdd.WaitForExit(); }
+            } catch { }
+        }
+
         public SwiftShare()
         {
+            EnsureFirewallRule();
             UpdateNetworkInfo();
             InitializeComponent();
             SetupTrayIcon();
