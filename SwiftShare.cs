@@ -27,6 +27,9 @@ namespace FileTransferApp
         private int actualTcpPort = 0;
         private string myIpAddress;
         private string linkSpeed = "Unknown";
+        public static float DpiScaleX = 1.0f;
+        public static float DpiScaleY = 1.0f;
+        public static int S(int val) { return (int)(val * DpiScaleX); }
         private HashSet<string> localIps = new HashSet<string>();
         private Dictionary<string, DateTime> peerLastSeen = new Dictionary<string, DateTime>();
         
@@ -272,6 +275,10 @@ namespace FileTransferApp
 
         private void InitializeComponent()
         {
+            using (Graphics g = this.CreateGraphics()) {
+                DpiScaleX = g.DpiX / 96f;
+                DpiScaleY = g.DpiY / 96f;
+            }
             this.Text = "SwiftShare - Advanced Explorer";
             this.Size = new Size(1560, 1020);
             this.MinimumSize = new Size(1300, 840);
@@ -378,6 +385,7 @@ namespace FileTransferApp
                 TextBox tb = new TextBox() { Left = 20, Top = 20, Width = 240, Text = curName };
                 Button okBtn = new Button() { Text = "OK", Left = 160, Top = 50, Width = 100, DialogResult = DialogResult.OK };
                 pForm.Controls.Add(tb); pForm.Controls.Add(okBtn); pForm.AcceptButton = okBtn;
+                if (DpiScaleX != 1.0f || DpiScaleY != 1.0f) { pForm.Scale(new SizeF(DpiScaleX, DpiScaleY)); }
                 if (pForm.ShowDialog() == DialogResult.OK) {
                     string newName = tb.Text.Trim();
                     long ts = DateTime.UtcNow.Ticks;
@@ -434,10 +442,10 @@ namespace FileTransferApp
             btnLocalRefresh.Click += (s, e) => RefreshLocalList(txtLocal.Text);
             
             lvLocal = new ListView() { Location = new Point(5, 35), Size = new Size(splitExplorer.Panel1.Width - 10, splitExplorer.Panel1.Height - 80), View = View.Details, FullRowSelect = true, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right, Font = new Font("Yu Gothic UI", 9f) };
-            lvLocal.Columns.Add("Name", 200);
-            lvLocal.Columns.Add("Date Modified", 130);
-            lvLocal.Columns.Add("Type", 150);
-            lvLocal.Columns.Add("Size", 80);
+            lvLocal.Columns.Add("Name", S(200));
+            lvLocal.Columns.Add("Date Modified", S(130));
+            lvLocal.Columns.Add("Type", S(150));
+            lvLocal.Columns.Add("Size", S(80));
             
             ContextMenuStrip localMenu = new ContextMenuStrip();
             ToolStripMenuItem copyLocal = new ToolStripMenuItem("Copy", null, (s, e) => CopyLocalFiles()) { ShortcutKeyDisplayString = "Ctrl+C" };
@@ -502,10 +510,10 @@ namespace FileTransferApp
             btnRemoteRefresh.Click += (s, e) => RefreshRemoteList();
 
             lvRemote = new ListView() { Location = new Point(5, 35), Size = new Size(splitExplorer.Panel2.Width - 10, splitExplorer.Panel2.Height - 80), View = View.Details, FullRowSelect = true, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right, Font = new Font("Yu Gothic UI", 9f) };
-            lvRemote.Columns.Add("Name", 200);
-            lvRemote.Columns.Add("Date Modified", 130);
-            lvRemote.Columns.Add("Type", 150);
-            lvRemote.Columns.Add("Size", 80);
+            lvRemote.Columns.Add("Name", S(200));
+            lvRemote.Columns.Add("Date Modified", S(130));
+            lvRemote.Columns.Add("Type", S(150));
+            lvRemote.Columns.Add("Size", S(80));
 
             ContextMenuStrip remoteMenu = new ContextMenuStrip();
             ToolStripMenuItem copyRemote = new ToolStripMenuItem("Copy", null, (s, e) => CopyRemoteFiles()) { ShortcutKeyDisplayString = "Ctrl+C" };
@@ -587,6 +595,10 @@ namespace FileTransferApp
 
             lvLocal.ColumnClick += (s, e) => SortListView(lvLocal, e.Column);
             lvRemote.ColumnClick += (s, e) => SortListView(lvRemote, e.Column);
+            
+            if (DpiScaleX != 1.0f || DpiScaleY != 1.0f) {
+                this.Scale(new SizeF(DpiScaleX, DpiScaleY));
+            }
         }
 
         private void SortListView(ListView lv, int column)
@@ -1119,23 +1131,24 @@ namespace FileTransferApp
             };
             task.RemoveBtn = removeBtn; card.Controls.Add(removeBtn);
             expandBtn.Click += (s, e) => { 
-                if (card.Height == 70) { 
+                if (card.Height == S(70)) { 
                     expandBtn.Text = "Files ▲"; 
                     PopulateTaskTree(task); 
                 } else { 
-                    card.Height = 70; expandBtn.Text = "Files ▼"; 
+                    card.Height = S(70); expandBtn.Text = "Files ▼"; 
                     if (task.TreePanel != null) { card.Controls.Remove(task.TreePanel); task.TreePanel.Dispose(); task.TreePanel = null; }
                 } 
             };
             card.Controls.Add(expandBtn);
             card.Width = historyFlow.ClientSize.Width > 50 ? historyFlow.ClientSize.Width - 25 : 850;
+            if (DpiScaleX != 1.0f || DpiScaleY != 1.0f) { card.Scale(new SizeF(DpiScaleX, DpiScaleY)); }
             historyFlow.Controls.Add(card); historyFlow.Controls.SetChildIndex(card, 0);
         }
 
         private void PopulateTaskTree(TransferTask task)
         {
             if (task.TreePanel != null) { task.Card.Controls.Remove(task.TreePanel); task.TreePanel.Dispose(); task.TreePanel = null; }
-            Panel pnl = new Panel { Location = new Point(10, 75), Size = new Size(task.Card.ClientSize.Width - 20, 160), BorderStyle = BorderStyle.None, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+            Panel pnl = new Panel { Location = new Point(S(10), S(75)), Size = new Size(task.Card.ClientSize.Width - S(20), S(160)), BorderStyle = BorderStyle.None, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             TransparentTreeView tv = new TransparentTreeView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Yu Gothic UI", 9), ImageList = imageList, ShowLines = true, ShowPlusMinus = true };
             
             // Standard WinForms fix for mouse wheel: focus on hover
@@ -1147,8 +1160,8 @@ namespace FileTransferApp
                 tv.Nodes.Add("Hyper-scale transfer detected. Detailed file list hidden to maintain performance.");
                 tv.Nodes.Add("Total Items: " + task.TotalItems);
                 tv.EndUpdate();
-                task.Card.Height = 75 + 60 + 15;
-                pnl.Height = 60;
+                task.Card.Height = S(75 + 60 + 15);
+                pnl.Height = S(60);
                 return;
             }
 
