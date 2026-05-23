@@ -1400,7 +1400,40 @@ namespace FileTransferApp
 
         private async Task ReadFullAsync(Stream s, byte[] buf, int len) { int total = 0; while (total < len) { int r = await s.ReadAsync(buf, total, len - total); if (r == 0) throw new Exception("Closed"); total += r; } }
 
-        private async void BroadcastPresence() { while (true) { try { using (UdpClient udp = new UdpClient()) { udp.EnableBroadcast = true; udp.MulticastLoopback = true; udp.JoinMulticastGroup(IPAddress.Parse(MulticastIp)); byte[] data = Encoding.UTF8.GetBytes("SWIFTSHARE_V1|" + linkSpeed + "|" + actualTcpPort + "|" + instanceId); udp.Send(data, data.Length, new IPEndPoint(IPAddress.Parse(MulticastIp), UdpPort)); udp.Send(data, data.Length, new IPEndPoint(IPAddress.Broadcast, UdpPort)); } } catch { } await Task.Delay(3000); } }
+        private async void BroadcastPresence() {
+            while (true) {
+                try {
+                    using (UdpClient udp = new UdpClient()) {
+                        udp.EnableBroadcast = true;
+                        udp.MulticastLoopback = true;
+                        try { udp.JoinMulticastGroup(IPAddress.Parse(MulticastIp)); } catch { }
+                        byte[] data = Encoding.UTF8.GetBytes("SWIFTSHARE_V1|" + linkSpeed + "|" + actualTcpPort + "|" + instanceId);
+                        
+                        try { udp.Send(data, data.Length, new IPEndPoint(IPAddress.Parse(MulticastIp), UdpPort)); } catch { }
+                        try { udp.Send(data, data.Length, new IPEndPoint(IPAddress.Broadcast, UdpPort)); } catch { }
+
+                        foreach (NetworkInterface ni in NetworkInterface.GetAllNetworkInterfaces()) {
+                            if (ni.OperationalStatus == OperationalStatus.Up && ni.NetworkInterfaceType != NetworkInterfaceType.Loopback) {
+                                foreach (UnicastIPAddressInformation ip in ni.GetIPProperties().UnicastAddresses) {
+                                    if (ip.Address.AddressFamily == AddressFamily.InterNetwork && ip.IPv4Mask != null) {
+                                        try {
+                                            byte[] ipBytes = ip.Address.GetAddressBytes();
+                                            byte[] maskBytes = ip.IPv4Mask.GetAddressBytes();
+                                            if (maskBytes.Length == 4 && ipBytes.Length == 4) {
+                                                byte[] bcastBytes = new byte[4];
+                                                for (int i = 0; i < 4; i++) bcastBytes[i] = (byte)(ipBytes[i] | ~maskBytes[i]);
+                                                udp.Send(data, data.Length, new IPEndPoint(new IPAddress(bcastBytes), UdpPort));
+                                            }
+                                        } catch { }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch { }
+                await Task.Delay(3000);
+            }
+        }
 
         private void BroadcastAliasUpdate(string targetIp, string name, long ts)
         {
@@ -1408,8 +1441,26 @@ namespace FileTransferApp
                 using (UdpClient udp = new UdpClient()) {
                     udp.EnableBroadcast = true;
                     byte[] data = Encoding.UTF8.GetBytes("SYNC_ALIAS|" + targetIp + "|" + name + "|" + ts);
-                    udp.Send(data, data.Length, new IPEndPoint(IPAddress.Parse(MulticastIp), UdpPort));
-                    udp.Send(data, data.Length, new IPEndPoint(IPAddress.Broadcast, UdpPort));
+                    try { udp.Send(data, data.Length, new IPEndPoint(IPAddress.Parse(MulticastIp), UdpPort)); } catch { }
+                    try { udp.Send(data, data.Length, new IPEndPoint(IPAddress.Broadcast, UdpPort)); } catch { }
+
+                    foreach (NetworkInterface ni in NetworkInterface.GetAllNetworkInterfaces()) {
+                        if (ni.OperationalStatus == OperationalStatus.Up && ni.NetworkInterfaceType != NetworkInterfaceType.Loopback) {
+                            foreach (UnicastIPAddressInformation ip in ni.GetIPProperties().UnicastAddresses) {
+                                if (ip.Address.AddressFamily == AddressFamily.InterNetwork && ip.IPv4Mask != null) {
+                                    try {
+                                        byte[] ipBytes = ip.Address.GetAddressBytes();
+                                        byte[] maskBytes = ip.IPv4Mask.GetAddressBytes();
+                                        if (maskBytes.Length == 4 && ipBytes.Length == 4) {
+                                            byte[] bcastBytes = new byte[4];
+                                            for (int i = 0; i < 4; i++) bcastBytes[i] = (byte)(ipBytes[i] | ~maskBytes[i]);
+                                            udp.Send(data, data.Length, new IPEndPoint(new IPAddress(bcastBytes), UdpPort));
+                                        }
+                                    } catch { }
+                                }
+                            }
+                        }
+                    }
                 }
             } catch { }
         }
