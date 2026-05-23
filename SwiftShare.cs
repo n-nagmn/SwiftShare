@@ -945,7 +945,7 @@ namespace FileTransferApp
             try { 
                 using (TcpClient client = new TcpClient()) {
                     client.NoDelay = true;
-                    client.SendBufferSize = 33554432;
+                    // client.SendBufferSize = 33554432;
                     await client.ConnectAsync(ip, port);
                     using (NetworkStream ns = client.GetStream()) {
                         await SendCommandAsync(ns, "TASK_START|" + task.TaskName + "|" + task.TotalBytes + "|" + task.TotalItems + "|" + task.TaskId + "|" + actualTcpPort); 
@@ -1240,8 +1240,8 @@ namespace FileTransferApp
         private async Task HandleIncomingConnection(TcpClient client)
         {
             client.NoDelay = true;
-            client.ReceiveBufferSize = 33554432; 
-            client.SendBufferSize = 33554432;
+            // client.ReceiveBufferSize = 33554432; 
+            // client.SendBufferSize = 33554432;
             Stopwatch sw = new Stopwatch();
             TransferTask taskContext = null;
             try {
@@ -1362,7 +1362,9 @@ namespace FileTransferApp
                                         if (fs > 0) fstream.SetLength(fs);
                                         byte[] buf1 = new byte[2097152]; byte[] buf2 = new byte[2097152]; 
                                         byte[] rB = buf1; byte[] wB = buf2; long total = 0; Task wT = Task.Delay(0);
-                                        int r = await ns.ReadAsync(rB, 0, (int)Math.Min((long)rB.Length, fs - total));
+                                        int toRead = (int)Math.Min((long)rB.Length, fs - total);
+                                        if (toRead > 0) await ReadFullAsync(ns, rB, toRead);
+                                        int r = toRead;
                                         while (r > 0) { 
                                             if (taskContext != null) { if (taskContext.IsCancelled) break; while (taskContext.IsPaused && !taskContext.IsCancelled) await Task.Delay(200); } 
                                             await wT;
@@ -1376,7 +1378,9 @@ namespace FileTransferApp
                                                 taskContext.UpdateProgress(taskContext.TransferredBytes, spd); 
                                             } 
                                             if (total >= fs) break;
-                                            r = await ns.ReadAsync(rB, 0, (int)Math.Min((long)rB.Length, fs - total));
+                                            toRead = (int)Math.Min((long)rB.Length, fs - total);
+                                            if (toRead > 0) await ReadFullAsync(ns, rB, toRead);
+                                            r = toRead;
                                         } 
                                         await wT;
                                     }
