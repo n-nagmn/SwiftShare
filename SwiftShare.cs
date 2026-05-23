@@ -1091,7 +1091,35 @@ namespace FileTransferApp
             card.Resize += (s, e) => { int w = card.ClientSize.Width; expandBtn.Left = w - 110; removeBtn.Left = w - 220; deleteBtn.Left = w - 330; cancelBtn.Left = w - 330; openBtn.Left = w - 440; pauseBtn.Left = w - 440; speedLbl.Left = w - 540; pb.Width = Math.Max(10, speedLbl.Left - 20); if (task.TreePanel != null) task.TreePanel.Width = w - 20; };
             pauseBtn.Click += (s, e) => { task.IsPaused = !task.IsPaused; pauseBtn.Text = task.IsPaused ? "Resume" : "Pause"; statusLbl.Text = task.IsPaused ? "Status: Paused" : "Status: Transferring"; };
             task.PauseBtn = pauseBtn; card.Controls.Add(pauseBtn);
-            cancelBtn.Click += (s, e) => { task.IsCancelled = true; };
+            cancelBtn.Click += async (s, e) => { 
+                task.IsCancelled = true; 
+                await Task.Delay(500);
+                try {
+                    if (task.Direction == "IN") {
+                        foreach (var f in task.Files) {
+                            if (!string.IsNullOrEmpty(f.DestinationPath)) {
+                                try {
+                                    if (File.Exists(f.DestinationPath)) { File.SetAttributes(f.DestinationPath, FileAttributes.Normal); File.Delete(f.DestinationPath); }
+                                    else if (Directory.Exists(f.DestinationPath)) Directory.Delete(f.DestinationPath, true);
+                                } catch {}
+                            }
+                        }
+                        SafeInvoke(() => RefreshLocalList(txtLocal.Text)); 
+                    } 
+                    try {
+                        if (task.RemotePort > 0) {
+                            using (TcpClient client = new TcpClient()) { 
+                                await client.ConnectAsync(task.RemoteIP, task.RemotePort); 
+                                using (NetworkStream ns = client.GetStream()) { 
+                                    await SendCommandAsync(ns, "SYNC_REMOVE_TASK|" + task.TaskId + "|1"); 
+                                } 
+                            } 
+                        }
+                        if (task.Direction == "OUT") { await Task.Delay(800); SafeInvoke(() => RefreshRemoteList()); }
+                    } catch {}
+                    historyFlow.Controls.Remove(card); card.Dispose(); 
+                } catch (Exception ex) { MessageBox.Show("Error: " + ex.Message); }
+            };
             task.CancelBtn = cancelBtn; card.Controls.Add(cancelBtn);
             openBtn.Click += (s, e) => { try { if (Directory.Exists(task.LocalBaseDir)) Process.Start("explorer.exe", task.LocalBaseDir); } catch {} };
             task.OpenBtn = openBtn; card.Controls.Add(openBtn);
