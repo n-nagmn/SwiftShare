@@ -1422,7 +1422,10 @@ namespace FileTransferApp
                                             if (maskBytes.Length == 4 && ipBytes.Length == 4) {
                                                 byte[] bcastBytes = new byte[4];
                                                 for (int i = 0; i < 4; i++) bcastBytes[i] = (byte)(ipBytes[i] | ~maskBytes[i]);
-                                                udp.Send(data, data.Length, new IPEndPoint(new IPAddress(bcastBytes), UdpPort));
+                                                using (UdpClient boundUdp = new UdpClient(new IPEndPoint(ip.Address, 0))) {
+                                                    boundUdp.EnableBroadcast = true;
+                                                    boundUdp.Send(data, data.Length, new IPEndPoint(new IPAddress(bcastBytes), UdpPort));
+                                                }
                                             }
                                         } catch { }
                                     }
@@ -1454,7 +1457,10 @@ namespace FileTransferApp
                                         if (maskBytes.Length == 4 && ipBytes.Length == 4) {
                                             byte[] bcastBytes = new byte[4];
                                             for (int i = 0; i < 4; i++) bcastBytes[i] = (byte)(ipBytes[i] | ~maskBytes[i]);
-                                            udp.Send(data, data.Length, new IPEndPoint(new IPAddress(bcastBytes), UdpPort));
+                                            using (UdpClient boundUdp = new UdpClient(new IPEndPoint(ip.Address, 0))) {
+                                                boundUdp.EnableBroadcast = true;
+                                                boundUdp.Send(data, data.Length, new IPEndPoint(new IPAddress(bcastBytes), UdpPort));
+                                            }
                                         }
                                     } catch { }
                                 }
