@@ -458,14 +458,16 @@ namespace FileTransferApp
             lvLocal.Columns.Add("Size", S(80));
             
             ContextMenuStrip localMenu = new ContextMenuStrip();
+            ToolStripMenuItem cutLocal = new ToolStripMenuItem("Cut", null, (s, e) => CutLocalFiles()) { ShortcutKeyDisplayString = "Ctrl+X" };
             ToolStripMenuItem copyLocal = new ToolStripMenuItem("Copy", null, (s, e) => CopyLocalFiles()) { ShortcutKeyDisplayString = "Ctrl+C" };
             ToolStripMenuItem pasteLocal = new ToolStripMenuItem("Paste", null, (s, e) => PasteLocalFiles()) { ShortcutKeyDisplayString = "Ctrl+V" };
             ToolStripMenuItem deleteLocal = new ToolStripMenuItem("Delete", null, (s, e) => DeleteLocalFiles()) { ShortcutKeyDisplayString = "Del" };
-            localMenu.Items.AddRange(new ToolStripItem[] { copyLocal, pasteLocal, new ToolStripSeparator(), deleteLocal });
+            localMenu.Items.AddRange(new ToolStripItem[] { cutLocal, copyLocal, pasteLocal, new ToolStripSeparator(), deleteLocal });
             lvLocal.ContextMenuStrip = localMenu;
 
             lvLocal.KeyDown += (s, e) => {
-                if (e.Control && e.KeyCode == Keys.C) { CopyLocalFiles(); e.Handled = true; e.SuppressKeyPress = true; }
+                if (e.Control && e.KeyCode == Keys.X) { CutLocalFiles(); e.Handled = true; e.SuppressKeyPress = true; }
+                else if (e.Control && e.KeyCode == Keys.C) { CopyLocalFiles(); e.Handled = true; e.SuppressKeyPress = true; }
                 else if (e.Control && e.KeyCode == Keys.V) { PasteLocalFiles(); e.Handled = true; e.SuppressKeyPress = true; }
                 else if (e.KeyCode == Keys.Delete || (e.Control && e.KeyCode == Keys.D)) { DeleteLocalFiles(); e.Handled = true; e.SuppressKeyPress = true; }
             };
@@ -663,6 +665,27 @@ namespace FileTransferApp
             return imageList.Images.IndexOfKey(key);
         }
 
+        private void CutLocalFiles()
+        {
+            if (lvLocal.SelectedItems.Count == 0 || string.IsNullOrEmpty(txtLocal.Text)) return;
+            StringCollection paths = new StringCollection();
+            foreach (ListViewItem item in lvLocal.SelectedItems) {
+                string tag = item.Tag.ToString();
+                if (tag == "UP") continue;
+                paths.Add(tag.StartsWith("DRIVE|") ? tag.Split('|')[1] : Path.Combine(txtLocal.Text, item.Text));
+            }
+            if (paths.Count > 0) {
+                DataObject data = new DataObject();
+                data.SetFileDropList(paths);
+                byte[] moveEffect = new byte[] { 2, 0, 0, 0 };
+                MemoryStream dropEffect = new MemoryStream();
+                dropEffect.Write(moveEffect, 0, moveEffect.Length);
+                data.SetData("Preferred DropEffect", dropEffect);
+                Clipboard.SetDataObject(data, true);
+            }
+            remoteClipboardPaths.Clear();
+        }
+
         private void CopyLocalFiles()
         {
             if (lvLocal.SelectedItems.Count == 0 || string.IsNullOrEmpty(txtLocal.Text)) return;
@@ -687,12 +710,26 @@ namespace FileTransferApp
                 return;
             }
             if (!Clipboard.ContainsFileDropList() || string.IsNullOrEmpty(txtLocal.Text)) return;
+            bool isCut = false;
+            IDataObject data = Clipboard.GetDataObject();
+            if (data != null && data.GetDataPresent("Preferred DropEffect")) {
+                MemoryStream ms = (MemoryStream)data.GetData("Preferred DropEffect");
+                if (ms != null) {
+                    byte[] effect = ms.ToArray();
+                    if (effect.Length > 0 && effect[0] == 2) isCut = true;
+                }
+            }
             StringCollection paths = Clipboard.GetFileDropList();
             foreach (string path in paths) {
                 try {
                     string dest = Path.Combine(txtLocal.Text, Path.GetFileName(path));
-                    if (File.Exists(path)) File.Copy(path, dest, true);
-                    else if (Directory.Exists(path)) CopyDirectory(path, dest);
+                    if (isCut) {
+                        if (File.Exists(path)) File.Move(path, dest);
+                        else if (Directory.Exists(path)) Directory.Move(path, dest);
+                    } else {
+                        if (File.Exists(path)) File.Copy(path, dest, true);
+                        else if (Directory.Exists(path)) CopyDirectory(path, dest);
+                    }
                 } catch (Exception ex) { MessageBox.Show("Paste error: " + ex.Message); }
             }
             RefreshLocalList(txtLocal.Text);
@@ -1812,8 +1849,8 @@ namespace FileTransferApp
                 })); 
             } 
         }
-        private void UpdateTreeNodes() { if (FileTree == null) return; lock(Files) { foreach (var item in Files) { if (item.NodeRef != null) { int p = (int)((item.TransferredBytes * 100) / (item.TotalSize > 0 ? item.TotalSize : 1)); string verifyStatus = ""; if (!string.IsNullOrEmpty(item.VerificationResult)) verifyStatus = " [" + item.VerificationResult + "]"; string newText = Path.GetFileName(item.RelativePath) + " [" + p + "%]" + verifyStatus; if (item.NodeRef.Text != newText) item.NodeRef.Text = newText; UpdateParentNode(item.NodeRef.Parent); } } } }
-        private void UpdateParentNode(TreeNode parent) { if (parent == null) return; double totalP = 0; foreach (TreeNode child in parent.Nodes) { string txt = child.Text; int start = txt.LastIndexOf('['); int end = txt.LastIndexOf('%'); if (start >= 0 && end > start) { double p; if (double.TryParse(txt.Substring(start + 1, end - start - 1), out p)) totalP += p; } } int avgP = (int)(totalP / (parent.Nodes.Count > 0 ? parent.Nodes.Count : 1)); string cleanName = parent.Text.Split('[')[0].Trim(); parent.Text = cleanName + " [" + avgP + "%]"; UpdateParentNode(parent.Parent); }
+        private void UpdateTreeNodes() { if (FileTree == null) return; lock(Files) { foreach (var item in Files) { if (item.NodeRef != null) { int p = (int)((item.TransferredBytes * 100) / (item.TotalSize > 0 ? item.TotalSize : 1)); string verifyStatus = ""; if (!string.IsNullOrEmpty(item.VerificationResult)) verifyStatus = " [" + item.VerificationResult + "]"; string newText = Path.GetFileName(item.RelativePath) + " " + FmtSize(item.TransferredBytes) + "/" + FmtSize(item.TotalSize) + " (" + p + "%)" + verifyStatus; if (item.NodeRef.Text != newText) item.NodeRef.Text = newText; UpdateParentNode(item.NodeRef.Parent); } } } }
+        private void UpdateParentNode(TreeNode parent) { if (parent == null) return; double totalP = 0; foreach (TreeNode child in parent.Nodes) { string txt = child.Text; int start = txt.LastIndexOf('('); int end = txt.LastIndexOf('%'); if (start >= 0 && end > start) { double p; if (double.TryParse(txt.Substring(start + 1, end - start - 1), out p)) totalP += p; } } int avgP = (int)(totalP / (parent.Nodes.Count > 0 ? parent.Nodes.Count : 1)); string cleanName = parent.Text; int lastParen = cleanName.LastIndexOf(" ("); if (lastParen > 0) cleanName = cleanName.Substring(0, lastParen); parent.Text = cleanName + " (" + avgP + "%)"; UpdateParentNode(parent.Parent); }
         public void CompleteTask(string status) { 
             IsCompleted = true;
             if (Card != null && !Card.IsDisposed) { Card.BeginInvoke(new MethodInvoker(delegate { 
