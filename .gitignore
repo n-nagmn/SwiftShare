@@ -1,0 +1,8 @@
+*.exe
+*.dll
+*.pdb
+obj/
+bin/
+test_render.cs
+test_scale.cs
+layout_test.png
