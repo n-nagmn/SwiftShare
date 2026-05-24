@@ -28,6 +28,10 @@ Name: "{autodesktop}\SwiftShare"; Filename: "{app}\SwiftShare.exe"; Tasks: deskt
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+Name: "startup"; Description: "Launch on Windows startup"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
+
+[Registry]
+Root: HKCU; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "SwiftShare"; ValueData: """{app}\SwiftShare.exe"" /background"; Flags: uninsdeletevalue; Tasks: startup
 
 [Run]
 Filename: "{app}\SwiftShare.exe"; Description: "{cm:LaunchProgram,SwiftShare}"; Flags: nowait postinstall skipifsilent

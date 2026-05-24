@@ -123,7 +123,7 @@ namespace FileTransferApp
             try {
                 try {
                     Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.High;
-                    GCSettings.LatencyMode = GCLatencyMode.SustainedLowLatency;
+                    GCSettings.LatencyMode = GCLatencyMode.Interactive;
                 } catch {}
                 
                 Application.EnableVisualStyles();
@@ -952,6 +952,7 @@ namespace FileTransferApp
 
                         Stopwatch sw = new Stopwatch(); sw.Start();
                         long processedItems = 0;
+                        byte[] outBuf1 = new byte[2097152]; byte[] outBuf2 = new byte[2097152];
 
                         foreach (string path in paths) {
                             if (task.IsCancelled) break;
@@ -960,14 +961,14 @@ namespace FileTransferApp
                                 string remotePath = Path.Combine(remoteDestDir, relPath).Replace("\\", "/");
                                 var item = new TransferItem { RelativePath = relPath, TotalSize = new FileInfo(path).Length };
                                 lock(task.Files) { task.Files.Add(item); }
-                                await StreamSingleFilePersistent(ns, path, remotePath, task, sw, relPath, item);
+                                await StreamSingleFilePersistent(ns, path, remotePath, task, sw, relPath, item, outBuf1, outBuf2);
                                 processedItems++;
                                 task.ProcessedItems = processedItems;
                                 task.UpdateProgress(task.TransferredBytes, (task.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001));
                             } else if (Directory.Exists(path)) {
                                 string rootDir = Path.GetDirectoryName(path);
                                 if (!rootDir.EndsWith(Path.DirectorySeparatorChar.ToString())) rootDir += Path.DirectorySeparatorChar;
-                                processedItems = await SendFolderRecursive(ns, path, rootDir, remoteDestDir, task, sw, processedItems);
+                                processedItems = await SendFolderRecursive(ns, path, rootDir, remoteDestDir, task, sw, processedItems, outBuf1, outBuf2);
                             }
                         }
 
@@ -979,7 +980,10 @@ namespace FileTransferApp
                         }
                         } catch (Exception ex) { task.CompleteTask("Failed: " + ex.Message); return; }
 
-                        task.CompleteTask(task.IsCancelled ? "Cancelled" : "Completed");
+                        int writeErrors = 0;
+                        lock(task.Files) { foreach (var f in task.Files) { if (f.VerificationResult != null && f.VerificationResult.StartsWith("Write Error")) writeErrors++; } }
+                        string finalStatus = task.IsCancelled ? "Cancelled" : (writeErrors > 0 ? "Completed (" + writeErrors + " errors)" : "Completed");
+                        task.CompleteTask(finalStatus);
                         SafeInvoke(() => { RefreshRemoteList(); });
                         }
 
@@ -1000,11 +1004,10 @@ namespace FileTransferApp
                         return new Tuple<long, long>(count, size);
                         }
 
-                        private async Task<long> SendFolderRecursive(NetworkStream ns, string currentDir, string rootDir, string remoteDestDir, TransferTask task, Stopwatch sw, long currentProcessed)
+                        private async Task<long> SendFolderRecursive(NetworkStream ns, string currentDir, string rootDir, string remoteDestDir, TransferTask task, Stopwatch sw, long currentProcessed, byte[] outBuf1, byte[] outBuf2)
                         {
                         if (task.IsCancelled) return currentProcessed;
 
-                        try {
                         string relDir = currentDir.Substring(rootDir.Length).Replace("\\", "/");
                         string remoteDir = Path.Combine(remoteDestDir, relDir).Replace("\\", "/");
                         lock(task.Files) { task.Files.Add(new TransferItem { RelativePath = relDir, TotalSize = 0, VerificationResult = "Verified" }); }
@@ -1013,60 +1016,78 @@ namespace FileTransferApp
                         task.ProcessedItems = currentProcessed;
                         task.UpdateProgress(task.TransferredBytes, (task.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001));
 
-                        foreach (string file in Directory.GetFiles(currentDir)) {
-                        if (task.IsCancelled) break;
-                        string relPath = file.Substring(rootDir.Length).Replace("\\", "/");
-                        var item = new TransferItem { RelativePath = relPath, TotalSize = new FileInfo(file).Length };
-                        lock(task.Files) { task.Files.Add(item); }
-                        await StreamSingleFilePersistent(ns, file, Path.Combine(remoteDestDir, relPath), task, sw, relPath, item);
-                        currentProcessed++;
-                        task.ProcessedItems = currentProcessed;
-                        task.UpdateProgress(task.TransferredBytes, (task.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001));
+                        string[] files = null;
+                        try { files = Directory.GetFiles(currentDir); } catch {}
+                        if (files != null) {
+                            foreach (string file in files) {
+                                if (task.IsCancelled) break;
+                                string relPath = file.Substring(rootDir.Length).Replace("\\", "/");
+                                var item = new TransferItem { RelativePath = relPath, TotalSize = 0 };
+                                try { item.TotalSize = new FileInfo(file).Length; } catch {}
+                                lock(task.Files) { task.Files.Add(item); }
+                                await StreamSingleFilePersistent(ns, file, Path.Combine(remoteDestDir, relPath), task, sw, relPath, item, outBuf1, outBuf2);
+                                currentProcessed++;
+                                task.ProcessedItems = currentProcessed;
+                                task.UpdateProgress(task.TransferredBytes, (task.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001));
+                            }
                         }
 
-                        foreach (string dir in Directory.GetDirectories(currentDir)) {
-                        if (task.IsCancelled) break;
-                        currentProcessed = await SendFolderRecursive(ns, dir, rootDir, remoteDestDir, task, sw, currentProcessed);
+                        string[] dirs = null;
+                        try { dirs = Directory.GetDirectories(currentDir); } catch {}
+                        if (dirs != null) {
+                            foreach (string dir in dirs) {
+                                if (task.IsCancelled) break;
+                                currentProcessed = await SendFolderRecursive(ns, dir, rootDir, remoteDestDir, task, sw, currentProcessed, outBuf1, outBuf2);
+                            }
                         }
-                        } catch {}
 
                         return currentProcessed;
                         }
 
-                        private async Task StreamSingleFilePersistent(NetworkStream ns, string localPath, string remotePath, TransferTask task, Stopwatch sw, string relPathForTree, TransferItem item)
+                        private async Task StreamSingleFilePersistent(NetworkStream ns, string localPath, string remotePath, TransferTask task, Stopwatch sw, string relPathForTree, TransferItem item, byte[] outBuf1, byte[] outBuf2)
                         {
-                        try {
-                        long fsLen = new FileInfo(localPath).Length;
-                        string hash = "";
-                        if (fsLen > 0) {
-                            // using (var md5 = System.Security.Cryptography.MD5.Create())
-                            // using (var fs = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)) {
-                            //     hash = BitConverter.ToString(md5.ComputeHash(fs)).Replace("-", "").ToLower();
-                            // }
-                        }
-                        await SendCommandAsync(ns, "PUSH|" + remotePath + "|" + fsLen + "|" + task.TaskId + "|" + relPathForTree + "|" + hash);
-                        if (fsLen > 0) {
-                        using (FileStream fs = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4194304, FileOptions.SequentialScan | FileOptions.Asynchronous)) { 
-                        byte[] buf1 = new byte[2097152]; byte[] buf2 = new byte[2097152]; 
-                        byte[] rB = buf1; byte[] wB = buf2; Task wT = Task.Delay(0);
-                        int r = await fs.ReadAsync(rB, 0, rB.Length);
-                        while (r > 0) {
-                            if (task.IsCancelled) break;
-                            while (task.IsPaused && !task.IsCancelled) await Task.Delay(200);
-                            await wT;
-                            byte[] tmp = rB; rB = wB; wB = tmp;
-                            wT = ns.WriteAsync(wB, 0, r);
-                            System.Threading.Interlocked.Add(ref task.transferredBytesBacking, r);
-                            task.UpdateProgress(task.TransferredBytes, (task.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001));
-                            r = await fs.ReadAsync(rB, 0, rB.Length);
-                        }
-                        await wT;
-                        }
-                        }
-                        string resp = await ReadCommandAsync(ns);
-                        if (resp == "OK") item.VerificationResult = "Verified";
-                        else item.VerificationResult = "Verification Failed";
-                        } catch { throw; } 
+                            FileStream fs = null;
+                            long fsLen = 0;
+                            try {
+                                fsLen = item.TotalSize;
+                                if (fsLen > 0) {
+                                    fs = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4194304, FileOptions.SequentialScan | FileOptions.Asynchronous);
+                                    fsLen = fs.Length;
+                                }
+                            } catch {
+                                item.VerificationResult = "Access Denied";
+                                return;
+                            }
+
+                            try {
+                                task.CurrentItem = item;
+                                await SendCommandAsync(ns, "PUSH|" + remotePath + "|" + fsLen + "|" + task.TaskId + "|" + relPathForTree + "|");
+                                if (fsLen > 0) {
+                                    byte[] rB = outBuf1; byte[] wB = outBuf2; Task wT = Task.Delay(0);
+                                    int r = await fs.ReadAsync(rB, 0, rB.Length);
+                                    long totalSent = 0;
+                                    while (r > 0) {
+                                        if (task.IsCancelled) break;
+                                        while (task.IsPaused && !task.IsCancelled) await Task.Delay(200);
+                                        await wT;
+                                        byte[] tmp = rB; rB = wB; wB = tmp;
+                                        wT = ns.WriteAsync(wB, 0, r);
+                                        totalSent += r;
+                                        System.Threading.Interlocked.Add(ref task.transferredBytesBacking, r);
+                                        task.UpdateProgress(task.TransferredBytes, (task.TransferredBytes / 1024.0 / 1024.0) / (sw.Elapsed.TotalSeconds + 0.001));
+                                        if (totalSent >= fsLen) break;
+                                        r = await fs.ReadAsync(rB, 0, (int)Math.Min(rB.Length, (long)fsLen - totalSent));
+                                    }
+                                    await wT;
+                                    if (totalSent < fsLen) {
+                                        throw new Exception("File read incomplete (file may have shrunk or been locked during transfer).");
+                                    }
+                                }
+                                string resp = await ReadCommandAsync(ns);
+                                if (resp == "OK") item.VerificationResult = "Verified";
+                                else if (resp == "WRITE_ERROR") item.VerificationResult = "Write Error (Remote)";
+                                else item.VerificationResult = "Verification Failed";
+                            } catch { throw; } finally { if (fs != null) fs.Dispose(); }
                         }
         private void CreateTaskCard(TransferTask task)
         {
@@ -1078,7 +1099,7 @@ namespace FileTransferApp
             task.NameLbl = nameLbl; card.Controls.Add(nameLbl);
             ProgressBar pb = new ProgressBar { Location = new Point(10, 35), Height = 10 };
             task.Progress = pb; card.Controls.Add(pb);
-            Label statusLbl = new Label { Text = "Status: Waiting", Font = new Font("Yu Gothic UI", 8), ForeColor = Color.Gray, Location = new Point(10, 50), Size = new Size(200, 15) };
+            Label statusLbl = new Label { Text = "Status: Waiting", Font = new Font("Yu Gothic UI", 8), ForeColor = Color.Gray, Location = new Point(10, 50), AutoSize = true };
             task.StatusLbl = statusLbl; card.Controls.Add(statusLbl);
             Label speedLbl = new Label { Text = "0.0 MB/s", Font = new Font("Yu Gothic UI", 9), ForeColor = primaryColor, Location = new Point(0, 30), Size = new Size(90, 20), TextAlign = ContentAlignment.MiddleRight };
             task.SpeedLbl = speedLbl; card.Controls.Add(speedLbl);
@@ -1088,7 +1109,7 @@ namespace FileTransferApp
             Button cancelBtn = new Button { Text = "Cancel", Location = new Point(0, 10), Size = new Size(100, 25), FlatStyle = FlatStyle.Flat };
             Button openBtn = new Button { Text = "Open", Location = new Point(0, 10), Size = new Size(100, 25), FlatStyle = FlatStyle.Flat, Visible = false };
             Button pauseBtn = new Button { Text = "Pause", Location = new Point(0, 10), Size = new Size(100, 25), FlatStyle = FlatStyle.Flat };
-            card.Resize += (s, e) => { int w = card.ClientSize.Width; expandBtn.Left = w - 110; removeBtn.Left = w - 220; deleteBtn.Left = w - 330; cancelBtn.Left = w - 330; openBtn.Left = w - 440; pauseBtn.Left = w - 440; speedLbl.Left = w - 540; pb.Width = Math.Max(10, speedLbl.Left - 20); if (task.TreePanel != null) task.TreePanel.Width = w - 20; };
+            card.Resize += (s, e) => { int w = card.ClientSize.Width; int gap = S(5); int bw = expandBtn.Width; expandBtn.Left = w - bw - gap; removeBtn.Left = expandBtn.Left - removeBtn.Width - gap; deleteBtn.Left = removeBtn.Left - deleteBtn.Width - gap; cancelBtn.Left = removeBtn.Left - cancelBtn.Width - gap; openBtn.Left = cancelBtn.Left - openBtn.Width - gap; pauseBtn.Left = cancelBtn.Left - pauseBtn.Width - gap; speedLbl.Left = pauseBtn.Left - speedLbl.Width - gap; pb.Width = Math.Max(10, speedLbl.Left - 20); if (task.TreePanel != null) task.TreePanel.Width = w - S(20); };
             pauseBtn.Click += (s, e) => { task.IsPaused = !task.IsPaused; pauseBtn.Text = task.IsPaused ? "Resume" : "Pause"; statusLbl.Text = task.IsPaused ? "Status: Paused" : "Status: Transferring"; };
             task.PauseBtn = pauseBtn; card.Controls.Add(pauseBtn);
             cancelBtn.Click += async (s, e) => { 
@@ -1275,6 +1296,7 @@ namespace FileTransferApp
             try {
                 System.Threading.Thread.CurrentThread.Priority = System.Threading.ThreadPriority.Highest;
                 using (NetworkStream ns = client.GetStream()) {
+                    byte[] inBuf1 = new byte[2097152]; byte[] inBuf2 = new byte[2097152];
                     while (true) {
                         string cmdStr;
                         try { cmdStr = await ReadCommandAsync(ns); } catch { break; } // Connection closed
@@ -1380,16 +1402,18 @@ namespace FileTransferApp
                             string expectedHash = parts.Length > 5 ? parts[5] : "";
                             lock(activeInTasks) { if (activeInTasks.ContainsKey(tId)) taskContext = activeInTasks[tId]; }
                             TransferItem item = new TransferItem { RelativePath = treeRelPath, TotalSize = fs, LocalPath = "", DestinationPath = destPath }; 
-                            if (taskContext != null) { lock(taskContext.Files) { taskContext.Files.Add(item); } }
+                            if (taskContext != null) { lock(taskContext.Files) { taskContext.Files.Add(item); } taskContext.CurrentItem = item; }
                             string saveDir = Path.GetDirectoryName(destPath); if (!Directory.Exists(saveDir)) Directory.CreateDirectory(saveDir);
                             if (!sw.IsRunning) sw.Start();
+                            bool fileSuccess = false;
+                            long totalReceived = 0;
+                            Exception writeEx = null;
                             try {
-                                if (fs == 0) { using (File.Create(destPath)) {} item.VerificationResult = "Verified"; }
+                                if (fs == 0) { using (File.Create(destPath)) {} item.VerificationResult = "Verified"; fileSuccess = true; }
                                 else {
                                     using (FileStream fstream = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None, 4194304, FileOptions.SequentialScan | FileOptions.Asynchronous)) { 
                                         if (fs > 0) fstream.SetLength(fs);
-                                        byte[] buf1 = new byte[2097152]; byte[] buf2 = new byte[2097152]; 
-                                        byte[] rB = buf1; byte[] wB = buf2; long total = 0; Task wT = Task.Delay(0);
+                                        byte[] rB = inBuf1; byte[] wB = inBuf2; long total = 0; Task wT = Task.Delay(0);
                                         int toRead = (int)Math.Min((long)rB.Length, fs - total);
                                         if (toRead > 0) await ReadFullAsync(ns, rB, toRead);
                                         int r = toRead;
@@ -1398,7 +1422,7 @@ namespace FileTransferApp
                                             await wT;
                                             byte[] tmp = rB; rB = wB; wB = tmp;
                                             wT = fstream.WriteAsync(wB, 0, r);
-                                            total += r; 
+                                            total += r; totalReceived = total;
                                             if (taskContext != null) { 
                                                 System.Threading.Interlocked.Add(ref taskContext.transferredBytesBacking, r);
                                                 System.Threading.Interlocked.Add(ref item.transferredBytesBacking, r);
@@ -1422,10 +1446,31 @@ namespace FileTransferApp
                                     } else {
                                         item.VerificationResult = "Verified";
                                     }
+                                    fileSuccess = true;
                                 }
-                                await SendCommandAsync(ns, item.VerificationResult == "Verified" ? "OK" : "VERIFY_FAIL");
-                                lock(activeInTasks) { if (activeInTasks.ContainsKey(tId)) { var t = activeInTasks[tId]; t.ProcessedItems++; t.UpdateProgress(t.TransferredBytes, 0); } }
-                            } catch { if (taskContext != null) taskContext.CompleteTask("Write Error"); }
+                            } catch (Exception ex) {
+                                item.VerificationResult = "Write Error";
+                                writeEx = ex;
+                            }
+                            // Handle write error recovery outside catch (C# 5 does not allow await in catch)
+                            if (writeEx != null) {
+                                // Drain remaining file data from the stream to maintain protocol sync
+                                long remaining = fs - totalReceived;
+                                while (remaining > 0) {
+                                    int toRead = (int)Math.Min((long)inBuf1.Length, remaining);
+                                    await ReadFullAsync(ns, inBuf1, toRead);
+                                    remaining -= toRead;
+                                }
+                                // Delete incomplete file
+                                try { if (File.Exists(destPath)) File.Delete(destPath); } catch {}
+                                // Log error details
+                                try { File.AppendAllText(
+                                    Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SwiftShare_errors.log"),
+                                    "[" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "] Write Error: '" + destPath + "' (" + writeEx.GetType().Name + ": " + writeEx.Message + ")\r\n"); 
+                                } catch {}
+                            }
+                            await SendCommandAsync(ns, fileSuccess ? (item.VerificationResult == "Verified" ? "OK" : "VERIFY_FAIL") : "WRITE_ERROR");
+                            lock(activeInTasks) { if (activeInTasks.ContainsKey(tId)) { var t = activeInTasks[tId]; t.ProcessedItems++; t.UpdateProgress(t.TransferredBytes, 0); } }
                         }
                         else if (cmd == "EXCHANGE_ALIASES") {
                             string peerData = parts.Length > 1 ? parts[1] : "";
@@ -1435,7 +1480,7 @@ namespace FileTransferApp
                         }
                     }
                 }
-            } catch { SafeInvoke(() => { if (taskContext != null) taskContext.CompleteTask("Error"); }); }
+            } catch (Exception ex) { SafeInvoke(() => { if (taskContext != null) taskContext.CompleteTask("Error: " + ex.Message); }); }
             finally { client.Close(); }
         }
 
@@ -1733,7 +1778,9 @@ namespace FileTransferApp
         public Stopwatch TransferSw { get; set; }
         public bool IsPaused { get; set; } public bool IsCancelled { get; set; } public bool IsCompleted { get; set; }
         public List<TransferItem> Files { get; set; } public string LocalBaseDir { get; set; } public string RemoteIP { get; set; } public int RemotePort { get; set; }
+        public TransferItem CurrentItem { get; set; }
         public Panel Card { get; set; } public Label NameLbl { get; set; } public ProgressBar Progress { get; set; } public Label StatusLbl { get; set; } public Label SpeedLbl { get; set; } public Button PauseBtn { get; set; } public Button CancelBtn { get; set; } public Button OpenBtn { get; set; } public Button DeleteBtn { get; set; } public Button RemoveBtn { get; set; } public TreeView FileTree { get; set; } public Panel TreePanel { get; set; }
+        public static string FmtSize(long bytes) { if (bytes < 1024) return bytes + " B"; if (bytes < 1048576) return (bytes / 1024.0).ToString("F1") + " KB"; if (bytes < 1073741824) return (bytes / 1048576.0).ToString("F1") + " MB"; return (bytes / 1073741824.0).ToString("F2") + " GB"; }
         private long lastUiUpdateTicks = 0;
         public TransferTask() { Files = new List<TransferItem>(); TaskId = Guid.NewGuid().ToString(); TransferSw = new Stopwatch(); }
         public void UpdateProgress(long totalCurrent, double speedMBs) { 
@@ -1744,8 +1791,13 @@ namespace FileTransferApp
             if (Card != null && !Card.IsDisposed) { 
                 Card.BeginInvoke(new MethodInvoker(delegate { 
                     if (StatusLbl != null) {
-                        string pctPart = TotalBytes > 0 ? " (" + ((totalCurrent * 100) / TotalBytes) + "%)" : "";
-                        StatusLbl.Text = string.Format("Status: Processed {0:N0} / {1:N0} items{2}", ProcessedItems, TotalItems, pctPart);
+                        string sizeInfo = FmtSize(totalCurrent) + " / " + FmtSize(TotalBytes);
+                        string fileInfo = "";
+                        TransferItem ci = CurrentItem;
+                        if (ci != null && ci.TotalSize > 0 && string.IsNullOrEmpty(ci.VerificationResult)) {
+                            fileInfo = "  |  " + Path.GetFileName(ci.RelativePath) + ": " + FmtSize(ci.TransferredBytes) + " / " + FmtSize(ci.TotalSize);
+                        }
+                        StatusLbl.Text = string.Format("{0:N0}/{1:N0} items   {2}{3}", ProcessedItems, TotalItems, sizeInfo, fileInfo);
                     }
                     if (Progress != null) { 
                         int p = 0;
@@ -1778,11 +1830,14 @@ namespace FileTransferApp
                         else if (allVerified) { NameLbl.Text += " [Verified]"; NameLbl.ForeColor = Color.Green; }
                     }
                 }
-                if (StatusLbl != null) StatusLbl.Text = "Status: " + status + " (" + ProcessedItems + " items)"; 
+                if (StatusLbl != null) {
+                    string sizeInfo = FmtSize(TransferredBytes) + " / " + FmtSize(TotalBytes);
+                    StatusLbl.Text = string.Format("Status: {0} ({1:N0}/{2:N0} items   {3})", status, ProcessedItems, TotalItems, sizeInfo);
+                }
                 if (PauseBtn != null) PauseBtn.Visible = false; if (CancelBtn != null) CancelBtn.Visible = false; 
-                if (OpenBtn != null) OpenBtn.Visible = (status == "Completed"); if (DeleteBtn != null) DeleteBtn.Visible = (status == "Completed"); 
+                if (OpenBtn != null) OpenBtn.Visible = (status == "Completed" || status.Contains("Completed")); if (DeleteBtn != null) DeleteBtn.Visible = (status == "Completed" || status.Contains("Completed")); 
                 if (RemoveBtn != null) RemoveBtn.Visible = true; 
-                if (Progress != null) { Progress.Value = 100; Progress.Update(); } 
+                if (Progress != null && (status == "Completed" || status.Contains("Completed"))) { Progress.Value = 100; Progress.Update(); } 
                 if (SpeedLbl != null) SpeedLbl.Text = "---"; 
                 if (TotalItems < 50000) UpdateTreeNodes(); 
             })); } 
