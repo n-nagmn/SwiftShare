@@ -1080,6 +1080,20 @@ namespace FileTransferApp
             try { 
                 using (TcpClient client = new TcpClient()) {
                     client.NoDelay = true;
+                    
+                    int currentPort = task.RemotePort;
+                    bool portFound = false;
+                    lock(peerLastSeen) {
+                        if (peerLastSeen.ContainsKey(task.RemoteIP + ":" + task.RemotePort)) portFound = true;
+                        else {
+                            foreach (string key in peerLastSeen.Keys) {
+                                if (key.StartsWith(task.RemoteIP + ":")) { currentPort = int.Parse(key.Split(':')[1]); portFound = true; break; }
+                            }
+                        }
+                    }
+                    if (!portFound) { throw new Exception("Remote peer not found online."); }
+                    task.RemotePort = currentPort;
+
                     await client.ConnectAsync(task.RemoteIP, task.RemotePort);
                     using (NetworkStream ns = client.GetStream()) {
                         await SendCommandAsync(ns, "TASK_START|" + task.TaskName + "|" + task.TotalBytes + "|" + task.TotalItems + "|" + task.TaskId + "|" + actualTcpPort); 
